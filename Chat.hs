@@ -65,7 +65,15 @@ getClient identity = M.lookup identity <$> getState
 broadcast :: Message -> ServerM ()
 broadcast msg = do
     chans <- map snd . map transport . M.elems <$> getState
-    liftIO $ mapM_ (atomically . flip writeTChan msg) chans
+    mapM_ (liftSTM . flip writeTChan msg) chans
+
+echo :: Message -> Client -> ServerM ()
+echo msg c = do
+    let tranRsp = snd . transport $ c
+    liftSTM $ writeTChan tranRsp msg
+
+recv :: Client -> ServerM Message
+recv c = liftSTM $ readTChan (snd . transport $ c)
 
 testClient :: Identity -> Message -> ServerM ()
 testClient identity msg = do
