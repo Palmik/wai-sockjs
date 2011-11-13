@@ -28,10 +28,10 @@ authenticated :: Request -> Client -> ServerM Text
 authenticated (cmd, identity, msg) client  = case cmd of
     "broadcast" -> broadcast msg >> return "success.\n"
     "recv" -> recv client
-    "echo" -> echo msg client >> return "success.\n"
+    "echo" -> echo client msg >> return "success.\n"
 
 handle :: Request -> ServerM Text
-handle ("join", identity, _) = addClient identity >> return "success.\n"
+handle ("join", identity, _) = join identity >> return "success.\n"
 handle req@(_, identity, _) = do
     mc <- getClient identity
     case mc of

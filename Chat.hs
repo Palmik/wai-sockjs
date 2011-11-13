@@ -1,6 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Chat where
 
+import System.Posix
+import Data.IORef
+
 import Data.Map (Map)
 import qualified Data.Map as M
 
@@ -11,7 +14,8 @@ import qualified Data.Text.IO as T
 import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
-import Control.Monad.State
+import Control.Monad.IO.Class
+import Control.Monad.State hiding (join)
 
 modifyTVar :: TVar a -> (a -> a) -> STM ()
 modifyTVar v f = readTVar v >>= writeTVar v . f
@@ -30,9 +34,15 @@ type Message = Text
 
 type Transport = (TChan Message, TChan Message)
 
+data Status = StatusInit
+            | StatusReceiving
+            | StatusClosed
+
 data Client = Client
   { identity :: Identity
   , transport :: Transport
+  , status :: IORef Status
+  , timestamp :: IORef EpochTime
   }
 
 type Clients = Map Identity Client
@@ -49,15 +59,17 @@ newServerState = newTVarIO M.empty
 newClient :: Identity -> IO Client
 newClient identity = Client <$> pure identity
                             <*> ( (,) <$> newTChanIO <*> newTChanIO)
+                            <*> newIORef StatusInit
+                            <*> (epochTime >>= newIORef)
 
 numClients :: ServerM Int
 numClients = M.size <$> getState
 
-addClient :: Identity -> ServerM Transport
-addClient identity = do
+join :: Identity -> ServerM Client
+join identity = do
     client <- liftIO $ newClient identity
     modifyState (M.insert identity client)
-    return $ transport client
+    return $ client
 
 getClient :: Identity -> ServerM (Maybe Client)
 getClient identity = M.lookup identity <$> getState
@@ -67,17 +79,24 @@ broadcast msg = do
     chans <- map snd . map transport . M.elems <$> getState
     mapM_ (liftSTM . flip writeTChan msg) chans
 
-echo :: Message -> Client -> ServerM ()
-echo msg c = do
+echo :: Client -> Message -> ServerM ()
+echo c msg = do
     let tranRsp = snd . transport $ c
     liftSTM $ writeTChan tranRsp msg
 
 recv :: Client -> ServerM Message
 recv c = liftSTM $ readTChan (snd . transport $ c)
 
+recvOrJoin :: Identity -> ServerM (Either Client Message)
+recvOrJoin identity = do
+    mc <- getClient identity
+    case mc of
+        Nothing -> Left <$> join identity
+        Just c -> Right <$> recv c
+
 testClient :: Identity -> Message -> ServerM ()
 testClient identity msg = do
-    (chanReq, chanRsp) <- addClient identity
+    chanRsp <- snd . transport <$> join identity
     liftIO $ forkIO $ forever $ do
         s <- atomically (readTChan chanRsp)
         T.putStrLn $ T.concat [identity, ":", s]
