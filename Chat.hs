@@ -14,8 +14,9 @@ import qualified Data.Text.IO as T
 import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
+import Control.Monad hiding (join)
 import Control.Monad.IO.Class
-import Control.Monad.State hiding (join)
+import Control.Monad.Trans.State
 
 modifyTVar :: TVar a -> (a -> a) -> STM ()
 modifyTVar v f = readTVar v >>= writeTVar v . f

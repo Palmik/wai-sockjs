@@ -117,6 +117,10 @@ intercept st apps req = case findapp (pathInfo req) apps of
             resume th
             sendResponse th req sock rsp
             pause th
+        --sendTrunctedRsp :: Response -> IO ()
+        --sendTrunctedRsp = return ()
+        --sendTrunctedText :: Text -> IO ()
+        --sendTrunctedText = return ()
 
     isIFrame :: Text -> Bool
     isIFrame = T.isPrefixOf "iframe" &&. T.isSuffixOf ".html"
@@ -136,7 +140,15 @@ main = do
     let sockjs = intercept st [(["echo"], echoApp)]
     runSettings defaultSettings{ settingsPort=port, settingsIntercept=sockjs } pong
 
-iframeResponse = responseHTML iframeContent
+iframeResponse = ResponseBuilder
+                   statusOK
+                   [ ("Content-Type", "text/html; charset=UTF-8")
+                   , ("Cache-Control", "public; max-age=999999;")
+                   , ("Expires", "")
+                   , ("ETag", "")
+                   ]
+                   (fromByteString . encodeUtf8 $ iframeContent)
+
 iframeContent = "<!DOCTYPE html>\n\
 \<html>\n\
 \<head>\n\
