@@ -1,8 +1,15 @@
-import qualified Network.WebSockets as WS
-import Data.ByteString (ByteString)
-import Data.Enumerator
+{-# LANGUAGE OverloadedStrings #-}
+import Network.WebSockets hiding (fromLazyByteString)
+import qualified Network.WebSockets.Protocol as I
 import Data.Map (Map)
 import qualified Data.Map as M
+
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as L
+import Data.Enumerator
+import Data.Attoparsec
+import Blaze.ByteString.Builder
+
 import Control.Monad.IO.Class
 import Control.Monad
 import Control.Applicative
@@ -23,22 +30,23 @@ enumChan ch = checkContinue0 $ \loop f -> do
     stream <- liftIO $ readChan ch
     f stream >>== loop
 
-runWithChannels :: WS.Protocol p
-                => StreamChan ByteString -> StreamChan ByteString -> (WS.Request -> WS.WebSockets p a) -> IO a
+runWithChannels :: Protocol p
+                => StreamChan ByteString -> StreamChan ByteString -> (Request -> WebSockets p a) -> IO a
 runWithChannels inChan outChan ws = do
     r <- run $ enumChan inChan $$
-            WS.runWebSocketsWithHandshake WS.defaultWebSocketsOptions ws (iterChan outChan)
+            runWebSockets defaultWebSocketsOptions ws (iterChan outChan)
     writeChan outChan EOF
     either (error . show) return r
 
-data Sockjs = Sockjs
-instance Protocol Sockjs where
+data SockjsProtocol = SockjsProtocol
+instance Protocol SockjsProtocol where
     version _ = "sockjs"
     headerVersion _ = "sockjs"
-    encodeFrame _ mask (Frame _ _ payload) = payload
-    decodeFrame _ = Frame True TextFrame <$> takeByteString
-    -- finishRequest _ = 
-    implementations = [Sockjs]
+    encodeFrame _ mask (Frame _ _ payload) = fromLazyByteString payload
+    decodeFrame _ = Frame True TextFrame <$> takeLazyByteString
+    finishRequest _ (RequestHttpPart path hs) = return $ Right $ Request path hs response101
+    implementations = [SockjsProtocol]
+instance TextProtocol SockjsProtocol
 
 type SessionId = ByteString
 data Session = Session
@@ -48,8 +56,11 @@ data Session = Session
   }
 type SessionMap = Map SessionId Session
 
-ensureSession :: WS.Protocol p => MVar SessionMap -> SessionId -> (WS.Request -> WS.WebSockets p a) -> IO Session
-ensureSession msm sid app = modifyMVar msm $ \sm -> do
+type WSApp a = Request -> WebSockets SockjsProtocol a
+type AppRoute = [([ByteString], WSApp a)]
+
+newSockjsSession :: MVar SessionMap -> SessionId -> WSApp a -> IO Session
+newSockjsSession msm sid app = modifyMVar msm $ \sm -> do
     case M.lookup sid sm of
         Just old -> return (sm, old)
         Nothing -> do
@@ -59,3 +70,20 @@ ensureSession msm sid app = modifyMVar msm $ \sm -> do
             let sm' = M.insert sid new sm
             forkIO $ runWithChannels (inChan new) (outChan new) app >> return ()
             return (sm', new)
+
+
+wsApp :: AppRoute -> Request -> WebSockets SockjsProtocol a
+wsApp apps req = case msum $ map matchOne apps of
+    Just (app, (_:_:"websocket")) -> do
+        acceptRequest req
+        app req
+    _ -> rejectRequest req "Forbidden!"
+
+  where path = S.split '/' (requestPath req)
+        match (prefix, app) = (app, ) <$> stripPrefix prefix path
+
+echoApp :: Request -> WebSockets SockjsProtocol a
+echoApp req = forever $ do
+    msg <- receiveData
+    sendTextData (msg::L.ByteString)
+
