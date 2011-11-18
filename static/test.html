@@ -1,0 +1,29 @@
+<html>
+    <head>
+        <script type="text/JavaScript" src="sockjs.js"></script>
+        <script>
+function createSockjs(path) {
+    var host = window.location.host;
+    if(host == '') host = 'localhost';
+    var uri = 'http://' + host + path;
+    return new SockJS(uri);
+
+    // var Socket = "MozWebSocket" in window ? MozWebSocket : WebSocket;
+    // return new Socket(uri);
+}
+function testsock(path) {
+    var sock = createSockjs(path);
+    sock.onopen = function(msg) {
+        console.log('open', msg);
+    }
+    sock.onclose = function(msg) {
+        console.log('close', msg);
+    }
+    sock.onmessage = function(msg) {
+        console.log('message', msg);
+    }
+    return sock;
+}
+        </script>
+    </head>
+</html>
