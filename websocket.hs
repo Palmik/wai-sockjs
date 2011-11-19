@@ -48,6 +48,20 @@ response s = ResponseBuilder statusOK [("Content-Type", "text/plain")] (fromByte
 
 responseNotFound :: Response
 responseNotFound = ResponseBuilder statusNotFound [] (fromByteString "404/resource not found")
+responseNotAllowed :: Response
+responseNotAllowed = ResponseBuilder statusNotAllowed [] (fromByteString "405/method not allowed")
+responseOptions :: Maybe ByteString -> Response
+responseOptions morigin = ResponseBuilder statusNoContent
+                    [ ("Cache-Control", "public; max-age=31536000;")
+                    , ("Expires", "31536000")
+                    , ("Allow", "OPTIONS, POST")
+                    , ("access-control-max-age", "31536000")
+                    , ("access-control-allow-origin", fromMaybe "*" morigin)
+                    , ("access-control-allow-credentials", "true")
+                    , ("Set-Cookie", "JSESSIONID=dummy; path=/")
+                    ] mempty
+responseNoContent :: Response
+responseNoContent = ResponseBuilder statusNoContent [] mempty
 
 type SessionId = Text
 type Session = (StreamChan ByteString, StreamChan ByteString)
@@ -73,37 +87,52 @@ getSession :: MVar SessionMap -> SessionId -> IO (Maybe Session)
 getSession msm sid = M.lookup sid <$> readMVar msm
 
 httpApp :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
-httpApp msm apps req = case msum $ map match apps of
-    Just (app, ["chunking_test"]) -> return $ ResponseEnumerator chunkingTestEnum
-    Just (app, _:sid:path) -> case path of
-        ["xhr"] ->
-            liftIO (ensureSession msm sid app req) >>=
-            either (\(_, outChan) -> do
-                      r <- fromMaybe "c[3000,\"Go away!\"]\n" <$> liftIO (readMsg outChan)
-                      return $ response r
-                   )
-                   (\(_, outChan) -> response . S.concat . toChunks <$> liftIO (readChan outChan))
-        ["xhr_send"] ->
-            liftIO (getSession msm sid) >>=
-            maybe (return responseNotFound)
-                  (\(inChan, _) -> do
-                      -- msg <- joinI $ EB.isolate len $$ EL.consume
-                      msg <- EL.consume
-                      liftIO $ print ("post:", msg)
-                      liftIO $ writeMsg inChan $ L.fromChunks msg
-                      return $ responseBS "" )
-        ["xhr_streaming"] -> return $ ResponseEnumerator $ streamRsp sid app
+httpApp msm apps req = case (requestMethod req, msum (map match apps)) of
+    ("OPTIONS", Just _) -> return $ responseOptions $ lookup "Origin" (requestHeaders req)
+    ("POST", Just (app, path)) -> case path of
+        ["chunking_test"] -> return $ ResponseEnumerator chunkingTestEnum
+        (_:sid:path) -> case path of
+            ["xhr"] ->
+                liftIO (ensureSession msm sid app req) >>=
+                either (\(_, outChan) -> liftIO $ do
+                           r <- fromMaybe "c[3000,\"Go away!\"]\n" <$> readMsg outChan
+                           return $ response r
+                       )
+                       (\(_, outChan) -> liftIO $ do
+                           rsp <- readChan outChan
+                           print rsp
+                           -- TODO parse response
+                           return $ response "o\n"
+                       )
+            ["xhr_send"] ->
+                liftIO (getSession msm sid) >>=
+                maybe (return responseNotFound)
+                      (\(inChan, _) -> do
+                          -- msg <- joinI $ EB.isolate len $$ EL.consume
+                          msg <- EL.consume
+                          liftIO $ print ("post:", msg)
+                          liftIO $ writeMsg inChan $ L.fromChunks msg
+                          return $ responseNoContent )
+            ["xhr_streaming"] -> return $ ResponseEnumerator $ streamRsp sid app
+            _ -> return responseNotFound
         _ -> return responseNotFound
     _ -> return responseNotFound
   where
     match (prefix, app) = (app, ) <$> stripPrefix prefix (pathInfo req)
     toChunks (Chunks xs) = xs
     toChunks EOF = []
+    streamEnum :: StreamChan ByteString -> Enumerator Builder IO b
+    streamEnum chan = checkContinue0 $ \loop f -> do
+        mr <- liftIO $ readMsg chan
+        case mr of
+            Nothing -> f $ Chunks [fromByteString "c[3000,\"Go away!\"]\n", flush]
+            Just r -> f (Chunks [fromByteString r, flush]) >>== loop
+
     streamRsp :: SessionId -> WSApp EmulateProtocol -> (Status -> Headers -> Iteratee Builder IO a) -> IO a
     streamRsp sid app f = do
         ec <- ensureSession msm sid app req
         case ec of
-            Left c -> run_ $ f statusBadRequest []
+            Left c -> run_ $ liftIO (print "exists") >> f statusBadRequest []
             Right (_, outChan) -> do
                 rsp <- S.concat . toChunks <$> readChan outChan
                 print rsp
@@ -118,13 +147,7 @@ httpApp msm apps req = case msum $ map match apps of
                                              , fromByteString "\n", flush
                                              , fromByteString "o\n", flush
                                              ]
-                    loop :: Step Builder IO b -> Iteratee Builder IO b
-                    loop (Continue f) = do
-                        mr <- liftIO $ readMsg outChan
-                        case mr of
-                            Nothing -> f $ Chunks [fromByteString "c[3000,\"Go away!\"]\n", flush]
-                            Just r -> f (Chunks [fromByteString r, flush]) >>== loop
-                run_ $ enumPrelude >==> loop $$ iter
+                run_ $ enumPrelude >==> streamEnum outChan $$ iter
 
 chunkingTestEnum :: (Status -> Headers -> Iteratee Builder IO a) -> IO a
 chunkingTestEnum f = do
@@ -187,5 +210,5 @@ main = do
     runSettings defaultSettings
            { settingsPort = port
            , settingsIntercept = WaiWS.intercept (wsApp wsRoutes)
-           } $ httpRoutes [(["static"], staticApp)] (httpApp msm wsRoutes)
+           } $ httpRoutes [(["static"], staticApp)] (httpApp msm  wsRoutes)
 

@@ -1,5 +1,7 @@
+{-# LANGUAGE OverloadedStrings #-}
 module TestEmulate where
 
+import Debug.Trace
 import Data.Text (Text)
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -24,8 +26,10 @@ readMsg chan = do
     ms <- fmap toChunks $ readChan chan
     case ms of
         Nothing -> return Nothing
-        Just s ->
-            either (error . show) (return . Just . S.concat . L.toChunks . framePayload) $ parseOnly (decodeFrame EmulateProtocol) s
+        Just s -> return $
+            either (\err -> traceShow err Nothing)
+                   (Just . (\xs -> S.concat $ ["a"]++xs++["\n"]) . L.toChunks . framePayload) $ parseOnly (decodeFrame EmulateProtocol)
+                   s
   where toChunks EOF = Nothing
         toChunks (Chunks xs) = Just $ S.concat xs
 
