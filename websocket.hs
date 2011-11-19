@@ -19,14 +19,12 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as L
 import Data.Text (Text)
-import Data.Enumerator (Iteratee, Enumerator, run_, ($$), (=$), Stream(..), Step(..), runIteratee, joinI, (>>==) )
+import Data.Enumerator (Iteratee, Enumerator, run_, ($$), (=$), Stream(..), Step(..), runIteratee, joinI, (>>==), checkContinue0, (>==>) )
 import qualified Data.Enumerator as E
 import qualified Data.Enumerator.List as EL
 import Data.Attoparsec.Enumerator (iterParser)
 
-import Blaze.ByteString.Builder (Builder, fromByteString, toByteString, fromLazyByteString)
-import Blaze.ByteString.Builder.HTTP
-    (chunkedTransferEncoding, chunkedTransferTerminator)
+import Blaze.ByteString.Builder (Builder, fromByteString, toByteString, fromLazyByteString, flush)
 
 import Network.HTTP.Types-- (Status, statusOK, statusNotFound, decodePathSegments)
 import Network.Wai (Application, Request(..), Response(..), pathInfo)
@@ -40,15 +38,7 @@ import Data.FileEmbed (embedDir)
 import qualified Network.Wai.Handler.WebSockets as WaiWS
 import qualified Network.Wai.Application.Static as Static
 
-import TestEmulate (chat, echo, close, ServerState, writeMsg, readMsg)
-
-chunk :: E.Enumeratee Builder Builder IO a
-chunk = E.checkDone $ E.continue . step
-  where
-    step k E.EOF = k (E.Chunks [chunkedTransferTerminator]) >>== return
-    step k (E.Chunks []) = E.continue $ step k
-    step k (E.Chunks [x]) = k (E.Chunks [chunkedTransferEncoding x]) >>== chunk
-    step k (E.Chunks xs) = k (E.Chunks [chunkedTransferEncoding $ mconcat xs]) >>== chunk
+import TestEmulate (echo, close, writeMsg, readMsg, ServerState, chat)
 
 responseBS :: ByteString -> Response
 responseBS txt = ResponseBuilder statusOK [("Content-Type", "text/plain")] (fromByteString txt)
@@ -118,36 +108,41 @@ httpApp msm apps req = case msum $ map match apps of
                 rsp <- S.concat . toChunks <$> readChan outChan
                 print rsp
                 -- TODO parse response
-                let iter = EL.map fromByteString =$ f statusOK
-                            [ ("Content-Type", "application/javascript; charset=UTF-8")
-                            , ("Set-Cookie", "JSESSIONID=dummy; path=/")
-                            , ("access-control-allow-origin", "*")
-                            , ("access-control-allow-credentials", "true")
-                            ]
-                let iter' = enumChunks [ S.concat [S.replicate 2048 'h', "\n"]
-                                    , "o\n"
-                                    ] $$ iter
-                let --step :: Iteratee a m b -> m (Iteratee a m b)
-                    step it = do
-                        mr <- readMsg outChan
+                let iter = f statusOK
+                             [ ("Content-Type", "application/javascript; charset=UTF-8")
+                             , ("Set-Cookie", "JSESSIONID=dummy; path=/")
+                             , ("access-control-allow-origin", "*")
+                             , ("access-control-allow-credentials", "true")
+                             ]
+                    enumPrelude = enumChunks [ fromByteString $ S.replicate 2048 'h'
+                                             , fromByteString "\n", flush
+                                             , fromByteString "o\n", flush
+                                             ]
+                    loop :: Step Builder IO b -> Iteratee Builder IO b
+                    loop (Continue f) = do
+                        mr <- liftIO $ readMsg outChan
                         case mr of
-                            Nothing -> return $ enumSingle "c[3000,\"Go away!\"]\n" $$ it
-                            Just r -> step $ enumSingle r $$ it
-                step iter' >>= run_
+                            Nothing -> f $ Chunks [fromByteString "c[3000,\"Go away!\"]\n", flush]
+                            Just r -> f (Chunks [fromByteString r, flush]) >>== loop
+                run_ $ enumPrelude >==> loop $$ iter
 
 chunkingTestEnum :: (Status -> Headers -> Iteratee Builder IO a) -> IO a
 chunkingTestEnum f = do
-    let iter = EL.map fromByteString =$ f statusOK
+    let iter = f statusOK
                  [ ("Content-Type", "application/javascript; charset=UTF-8")
                  , ("access-control-allow-origin", "*")
                  , ("access-control-allow-credentials", "true")
                  ]
-    let iter' = enumChunks ["h\n", S.concat $ [S.replicate 2048 ' ', "h\n"]] $$ iter
-    foldM (\it ms -> threadDelay (ms*1000) >> return (enumChunks ["h\n"] $$ it)) iter' [5, 25, 125, 625, 3125]
-    >>= run_
+        enumPrelude = enumChunks [ fromByteString "h\n", flush
+                                 , fromByteString $ S.replicate 2048 ' '
+                                 , fromByteString "h\n", flush
+                                 ]
+        enumH = enumChunks [fromByteString "h\n", flush]
+        result = foldl (\enum ms -> enum >==> ioEnum (threadDelay $ ms*1000) >==> enumH) enumPrelude [5, 25, 125, 625, 3125]
+    run_ $ result $$ iter
 
-runEnum :: Monad m => Enumerator a m b -> Iteratee a m b -> m (Iteratee a m b)
-runEnum enum iter = runIteratee iter >>= enum
+ioEnum :: IO () -> Enumerator a IO b
+ioEnum io step = liftIO io >> E.returnI step
 
 enumSingle :: Monad m => a -> Enumerator a m b
 enumSingle c = enumChunks [c]
@@ -181,7 +176,7 @@ staticApp = Static.staticApp Static.defaultFileServerSettings
 
 wsRoutes :: TextProtocol p => AppRoute p
 wsRoutes = [ ( ["echo"], echo )
-           , ( ["chat"], chat serverState )
+           --, ( ["chat"], chat serverState )
            , ( ["close"], close )
            ]
 
@@ -192,6 +187,5 @@ main = do
     runSettings defaultSettings
            { settingsPort = port
            , settingsIntercept = WaiWS.intercept (wsApp wsRoutes)
-           , settingsRechunking = False
            } $ httpRoutes [(["static"], staticApp)] (httpApp msm wsRoutes)
 
