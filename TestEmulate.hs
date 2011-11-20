@@ -15,6 +15,12 @@ import Blaze.ByteString.Builder (toByteString)
 import Control.Concurrent.Chan
 import Data.Enumerator
 import Data.Attoparsec (parseOnly)
+import Data.Aeson
+
+data TestMessage = TestMessage String
+
+instance fromJSON TestMessage where
+    fromJSON (Array [v]) = TestMessage <$> fromJSON v
 
 writeMsg :: StreamChan ByteString -> L.ByteString -> IO ()
 writeMsg chan msg = do
@@ -36,12 +42,15 @@ readMsg chan = do
 echo :: TextProtocol p => Request -> WebSockets p ()
 echo req = do
     acceptRequest req
+    sendTextData ("o"::Text)
     forever $ do
         msg <- receiveData
         sendTextData (msg::Text)
 
-close :: Protocol p => Request -> WebSockets p ()
-close req = rejectRequest req "close"
+close :: TextProtocol p => Request -> WebSockets p ()
+close req = do
+    sendTextData ("o"::Text)
+    sendTextData ("c[3000,\"Go away!\"]"::Text)
 
 type ServerState p = Map Text (Sink p) 
 
