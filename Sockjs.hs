@@ -9,6 +9,7 @@ module Sockjs
   , jsonData
   , receiveMsg
   , sendMsg
+  , serverErrorRsp
   ) where
 
 -- imports {{{
@@ -37,6 +38,7 @@ import qualified Data.Enumerator.List as EL
 
 import Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as B
+import qualified Blaze.ByteString.Builder.Char8 as B
 
 import Data.Attoparsec.Lazy (parse, eitherResult)
 import qualified Data.Attoparsec.Enumerator as AE
@@ -85,7 +87,7 @@ instance ToJSON SockjsMessage where
 
 sendMsg :: StreamChan ByteString -> L.ByteString -> IO ()
 sendMsg chan = writeChan chan
-             . maybe EOF
+             . maybe (error "Broken JSON encoding.")
                      (\(SockjsMessage msg) ->
                            Chunks
                          . (:[])
@@ -130,6 +132,9 @@ notAllowedRsp = ResponseBuilder statusNotAllowed [] (B.fromByteString "405/metho
 
 noContentRsp :: Response
 noContentRsp = ResponseBuilder statusNoContent [] mempty
+
+serverErrorRsp :: String -> Response
+serverErrorRsp msg = ResponseBuilder statusServerError [] (B.fromString msg)
 
 optionsRsp :: Maybe ByteString -> Response
 optionsRsp morigin = ResponseBuilder statusNoContent
@@ -200,9 +205,11 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
                 liftIO (getSession msm sid) >>=
                 maybe (return notFoundRsp)
                       (\(inChan, _) -> do
-                          msg <- EL.consume
-                          liftIO $ sendMsg inChan $ L.fromChunks msg
+                          msg <- L.fromChunks <$> EL.consume
+                          when (L.null msg) $ error "payload expected."
+                          liftIO $ sendMsg inChan msg
                           return $ noContentRsp
+                        `E.catchError` (\err -> return $ serverErrorRsp $ show err)
                       )
 
             "xhr_streaming" ->
