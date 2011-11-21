@@ -18,6 +18,19 @@ import Network.WebSockets
 
 import Sockjs
 
+receiveJSON :: (WS.TextProtocol p, FromJSON a) => WebSockets p a
+receiveJSON = do
+    msg <- receiveData
+    case decode msg of
+        Nothing -> throwWsError $ ParseError $ AE.ParseError [] ""
+        Just d -> return d
+
+sendJSON :: (WS.TextProtocol p, ToJSON a) => a -> WebSockets p ()
+sendJSON x = sendTextData (encode x)
+
+jsonData :: (TextProtocol p, ToJSON a) => a -> Message p
+jsonData = DataMessage . Text . encode
+
 echo :: TextProtocol p => Request -> WebSockets p ()
 echo req = do
     acceptRequest req

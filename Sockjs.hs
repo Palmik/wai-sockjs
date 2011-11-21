@@ -4,9 +4,6 @@ module Sockjs
   , sockjsRoute
   , wsRoute
   , httpRoute
-  , receiveJSON
-  , sendJSON
-  , jsonData
   , receiveMsg
   , sendMsg
   , serverErrorRsp
@@ -20,7 +17,6 @@ import qualified Data.Map as M
 import Data.Monoid
 import Data.List
 import Data.Maybe
-import qualified Data.Vector as V
 
 import Control.Monad.IO.Class
 import Control.Monad
@@ -62,50 +58,28 @@ enumChunks xs = E.checkContinue0 $ \_ f -> f (E.Chunks xs) >>== E.returnI
 -- }}}
 
 -- transport utils {{{
-receiveJSON :: (WS.TextProtocol p, FromJSON a) => WebSockets p a
-receiveJSON = do
-    msg <- receiveData
-    case decode msg of
-        Nothing -> throwWsError $ ParseError $ AE.ParseError [] ""
-        Just d -> return d
 
-sendJSON :: (WS.TextProtocol p, ToJSON a) => a -> WebSockets p ()
-sendJSON x = sendTextData (encode x)
-
-jsonData :: (TextProtocol p, ToJSON a) => a -> Message p
-jsonData = DataMessage . Text . encode
-
-data SockjsMessage = SockjsMessage L.ByteString
-
-instance FromJSON SockjsMessage where
-    parseJSON (Array xs)
-        | [x] <- V.toList xs = SockjsMessage <$> parseJSON x
-    parseJSON _ = fail "parse fail"
-
-instance ToJSON SockjsMessage where
-    toJSON (SockjsMessage msg) = toJSON [toJSON msg]
-
-sendMsg :: StreamChan ByteString -> L.ByteString -> IO ()
-sendMsg chan = writeChan chan
-             . maybe (error "Broken JSON encoding.")
+sendMsg :: StreamChan ByteString -> L.ByteString -> IO (Maybe SockjsException)
+sendMsg chan = maybe (return $ Just SockjsInvalidJson)
                      (\(SockjsMessage msg) ->
-                           Chunks
+                         ( writeChan chan
+                         . Chunks
                          . (:[])
                          . B.toByteString
                          . encodeFrame EmulateProtocol Nothing
                          . Frame True BinaryFrame
-                         $ msg
+                         ) msg >> return Nothing
                      )
              . decode
 
-receiveMsg :: StreamChan ByteString -> IO (Maybe L.ByteString)
+receiveMsg :: StreamChan ByteString -> IO (Either SockjsException L.ByteString)
 receiveMsg chan = do
     stream <- readChan chan
     case stream of
-        EOF -> trace "msg EOF" $ return Nothing
+        EOF -> return $ Left SockjsClose
         Chunks xs ->
-            either (error . show)
-                   (return . Just . wrap . encode . SockjsMessage . framePayload)
+            either (return . Left . SockjsImpossible . ("internal broken encoding:"++) . show)
+                   (return . Right . wrap . encode . SockjsMessage . framePayload)
                    (eitherResult . parse (decodeFrame EmulateProtocol) . L.fromChunks $ xs)
   where
     wrap x = L.concat ["a", x, "\n"]
@@ -114,8 +88,8 @@ msgE :: StreamChan ByteString -> Enumerator Builder IO b
 msgE chan = checkContinue0 $ \loop f -> do
     mr <- liftIO $ receiveMsg chan
     case mr of
-        Nothing -> f $ Chunks [B.fromByteString "c[3000,\"Go away!\"]\n", B.flush]
-        Just r -> f (Chunks [B.fromLazyByteString r, B.flush]) >>== loop
+        Left _ -> f $ Chunks [B.fromByteString "c[3000,\"Go away!\"]\n", B.flush]
+        Right r -> f (Chunks [B.fromLazyByteString r, B.flush]) >>== loop
 
 -- }}}
 
@@ -191,7 +165,7 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
             "xhr" ->
                 liftIO (ensureSession msm sid app req) >>=
                 either (\(_, outChan) -> liftIO $ do
-                           r <- fromMaybe "c[3000,\"Go away!\"]\n" <$> receiveMsg outChan
+                           r <- either "c[3000,\"Go away!\"]\n" <$> receiveMsg outChan
                            return $ response r
                        )
                        (\(_, outChan) -> liftIO $ do
