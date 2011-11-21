@@ -1,57 +1,122 @@
 {-# LANGUAGE OverloadedStrings, TupleSections #-}
-import System.IO.Unsafe (unsafePerformIO)
-import System.Environment (getArgs)
+module Sockjs
+  ( AppRoute
+  , sockjsApp
+  , httpRoutes
+  , wsRoutes
+  , receiveJSON
+  , sendJSON
+  , jsonData
+  , receiveMsg
+  , sendMsg
+  ) where
 
-import Data.Monoid
-import Data.Char (isPunctuation, isSpace)
+-- imports {{{
+import Debug.Trace
+
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.List (stripPrefix, isPrefixOf)
-import Data.Maybe (Maybe, listToMaybe, fromMaybe)
+import Data.Monoid
+import Data.List
+import Data.Maybe
 
-import Control.Exception (fromException)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad (forever, msum, foldM)
-import Control.Applicative ( (<$>), (<*>) )
+import Control.Monad.IO.Class
+import Control.Monad
+import Control.Applicative
 import Control.Concurrent
 
 import Data.ByteString (ByteString)
+import Data.Text (Text)
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as L
-import Data.Text (Text)
-import Data.Enumerator (Iteratee, Enumerator, run_, ($$), (=$), Stream(..), Step(..), runIteratee, joinI, (>>==), checkContinue0, (>==>) )
+
+import Data.Enumerator hiding (map, foldl)
 import qualified Data.Enumerator as E
 import qualified Data.Enumerator.List as EL
-import Data.Attoparsec.Enumerator (iterParser)
 
-import Blaze.ByteString.Builder (Builder, fromByteString, toByteString, fromLazyByteString, flush)
+import Blaze.ByteString.Builder (Builder)
+import qualified Blaze.ByteString.Builder as B
 
-import Network.HTTP.Types-- (Status, statusOK, statusNotFound, decodePathSegments)
-import Network.Wai (Application, Request(..), Response(..), pathInfo)
-import Network.Wai.Handler.Warp (runSettings, defaultSettings, Settings(..))
+import Data.Attoparsec.Lazy (parse, eitherResult)
+import qualified Data.Attoparsec.Enumerator as AE
+import Data.Aeson (encode, decode, FromJSON, ToJSON)
 
-import Network.WebSockets hiding (Request, Response, requestHeaders, fromLazyByteString, close)
-import Network.WebSockets.Emulate
+import Network.HTTP.Types
+import Network.Wai
+
+import Network.WebSockets hiding (Request, Response, requestHeaders)
 import qualified Network.WebSockets as WS
+import Network.WebSockets.Emulate
 
-import Data.FileEmbed (embedDir)
-import qualified Network.Wai.Handler.WebSockets as WaiWS
-import qualified Network.Wai.Application.Static as Static
+-- }}}
 
-import TestEmulate (echo, close, writeMsg, readMsg, ServerState, chat)
+-- enumerator utils {{{
+ioEnum :: IO () -> Enumerator a IO b
+ioEnum io step = liftIO io >> E.returnI step
 
-responseBS :: ByteString -> Response
-responseBS txt = ResponseBuilder statusOK [("Content-Type", "text/plain")] (fromByteString txt)
+enumChunks :: Monad m => [a] -> Enumerator a m b
+enumChunks xs = E.checkContinue0 $ \_ f -> f (E.Chunks xs) >>== E.returnI
+-- }}}
+
+-- transport utils {{{
+receiveJSON :: (WS.TextProtocol p, FromJSON a) => WebSockets p a
+receiveJSON = do
+    msg <- receiveData
+    case decode msg of
+        Nothing -> throwWsError $ ParseError $ AE.ParseError [] ""
+        Just d -> return d
+
+sendJSON :: (WS.TextProtocol p, ToJSON a) => a -> WebSockets p ()
+sendJSON x = sendTextData (encode x)
+
+jsonData :: (TextProtocol p, ToJSON a) => a -> Message p
+jsonData = DataMessage . Text . encode
+
+sendMsg :: StreamChan ByteString -> L.ByteString -> IO ()
+sendMsg chan = writeChan chan
+                 . Chunks
+                 . (:[])
+                 . B.toByteString
+                 . encodeFrame EmulateProtocol Nothing
+                 . Frame True BinaryFrame
+
+receiveMsg :: StreamChan ByteString -> IO (Maybe ByteString)
+receiveMsg chan = do
+    stream <- readChan chan
+    case stream of
+        EOF -> trace "msg EOF" $ return Nothing
+        Chunks xs ->
+            either (error . show)
+                   (return . Just . S.concat . wrap . L.toChunks . framePayload)
+                   (eitherResult . parse (decodeFrame EmulateProtocol) . L.fromChunks $ xs)
+  where
+    wrap xs = ["a"]++xs++["\n"]
+
+msgE :: StreamChan ByteString -> Enumerator Builder IO b
+msgE chan = checkContinue0 $ \loop f -> do
+    mr <- liftIO $ receiveMsg chan
+    case mr of
+        Nothing -> f $ Chunks [B.fromByteString "c[3000,\"Go away!\"]\n", B.flush]
+        Just r -> f (Chunks [B.fromByteString r, B.flush]) >>== loop
+
+-- }}}
+
+-- response utils {{{
 
 response :: ByteString -> Response
-response s = ResponseBuilder statusOK [("Content-Type", "text/plain")] (fromByteString s)
+response s = ResponseBuilder statusOK [("Content-Type", "text/plain")] (B.fromByteString s)
 
-responseNotFound :: Response
-responseNotFound = ResponseBuilder statusNotFound [] (fromByteString "404/resource not found")
-responseNotAllowed :: Response
-responseNotAllowed = ResponseBuilder statusNotAllowed [] (fromByteString "405/method not allowed")
-responseOptions :: Maybe ByteString -> Response
-responseOptions morigin = ResponseBuilder statusNoContent
+notFoundRsp :: Response
+notFoundRsp = ResponseBuilder statusNotFound [] (B.fromByteString "404/resource not found")
+
+notAllowedRsp :: Response
+notAllowedRsp = ResponseBuilder statusNotAllowed [] (B.fromByteString "405/method not allowed")
+
+noContentRsp :: Response
+noContentRsp = ResponseBuilder statusNoContent [] mempty
+
+optionsRsp :: Maybe ByteString -> Response
+optionsRsp morigin = ResponseBuilder statusNoContent
                     [ ("Cache-Control", "public; max-age=31536000;")
                     , ("Expires", "31536000")
                     , ("Allow", "OPTIONS, POST")
@@ -60,8 +125,10 @@ responseOptions morigin = ResponseBuilder statusNoContent
                     , ("access-control-allow-credentials", "true")
                     , ("Set-Cookie", "JSESSIONID=dummy; path=/")
                     ] mempty
-responseNoContent :: Response
-responseNoContent = ResponseBuilder statusNoContent [] mempty
+
+-- }}}
+
+-- sessions {{{
 
 type SessionId = Text
 type Session = (StreamChan ByteString, StreamChan ByteString)
@@ -72,7 +139,7 @@ type AppRoute p = [([Text], WSApp p)]
 
 -- | create session if not exists, Left -> old session, Right -> new session.
 ensureSession :: MVar SessionMap -> SessionId -> WSApp EmulateProtocol -> Request -> IO (Either Session Session)
-ensureSession msm sid ws req = modifyMVar msm $ \sm ->
+ensureSession msm sid app req = modifyMVar msm $ \sm ->
     case M.lookup sid sm of
         Just old -> return (sm, Left old)
         Nothing -> do
@@ -80,136 +147,111 @@ ensureSession msm sid ws req = modifyMVar msm $ \sm ->
             inChan <- newChan
             outChan <- newChan
             let sm' = M.insert sid (inChan, outChan) sm
-            _ <- forkIO $ runEmulator inChan outChan (RequestHttpPart (rawPathInfo req) (requestHeaders req)) ws
+                req' = RequestHttpPart (rawPathInfo req) (requestHeaders req)
+            _ <- forkIO $ runEmulator inChan outChan req' app
             return (sm', Right (inChan, outChan))
 
 getSession :: MVar SessionMap -> SessionId -> IO (Maybe Session)
 getSession msm sid = M.lookup sid <$> readMVar msm
 
-httpApp :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
-httpApp msm apps req = case (requestMethod req, msum (map match apps)) of
-    ("OPTIONS", Just _) -> return $ responseOptions $ lookup "Origin" (requestHeaders req)
+-- }}}
+
+-- main application {{{
+
+sockjsApp :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
+sockjsApp msm apps req = case (requestMethod req, msum (map match apps)) of
+    ("OPTIONS", Just _) -> return $ optionsRsp $ lookup "Origin" (requestHeaders req)
 
     ("POST", Just (app, path)) -> case path of
-        ["chunking_test"] -> return $ ResponseEnumerator chunkingTestEnum
+        ["chunking_test"] ->
+            return $ ResponseEnumerator chunkingTestE
 
-        [_,sid,"xhr"] -> liftIO (ensureSession msm sid app req) >>=
-            either (\(_, outChan) -> liftIO $ do
-                       r <- fromMaybe "c[3000,\"Go away!\"]\n" <$> readMsg outChan
-                       return $ response r
-                   )
-                   (\(_, outChan) -> liftIO $ do
-                       rsp <- readChan outChan
-                       print rsp
-                       -- TODO parse response
-                       return $ response "o\n"
-                   )
+        [_, sid, path'] -> case path' of
+            "xhr" ->
+                liftIO (ensureSession msm sid app req) >>=
+                either (\(_, outChan) -> liftIO $ do
+                           r <- fromMaybe "c[3000,\"Go away!\"]\n" <$> receiveMsg outChan
+                           return $ response r
+                       )
+                       (\(_, outChan) -> liftIO $ do
+                           rsp <- readChan outChan
+                           print rsp
+                           -- TODO parse response
+                           return $ response "o\n"
+                       )
 
-        [_,sid,"xhr_send"] -> liftIO (getSession msm sid) >>=
-            maybe (return responseNotFound)
-                  (\(inChan, _) -> do
-                      -- msg <- joinI $ EB.isolate len $$ EL.consume
-                      msg <- EL.consume
-                      liftIO $ print ("post:", msg)
-                      liftIO $ writeMsg inChan $ L.fromChunks msg
-                      return $ responseNoContent )
+            "xhr_send" ->
+                liftIO (getSession msm sid) >>=
+                maybe (return notFoundRsp)
+                      (\(inChan, _) -> do
+                          msg <- EL.consume
+                          liftIO $ sendMsg inChan $ L.fromChunks msg
+                          return $ noContentRsp
+                      )
 
-        [_,sid,"xhr_streaming"] -> return $ ResponseEnumerator $ streamRsp sid app
+            "xhr_streaming" ->
+                return $ ResponseEnumerator $ \f ->
+                    ensureSession msm sid app req >>=
+                    either (const $ run_ $ liftIO (putStrLn "exists") >> f statusBadRequest [])
+                           (\(_, outChan) -> do
+                               -- read response
+                               rsp <- S.concat . toChunks <$> readChan outChan
+                               print rsp
+                               -- TODO parse response
+                               let iter = f statusOK
+                                       [ ("Content-Type", "application/javascript; charset=UTF-8")
+                                       , ("Set-Cookie", "JSESSIONID=dummy; path=/")
+                                       , ("access-control-allow-origin", "*")
+                                       , ("access-control-allow-credentials", "true")
+                                       ]
+                                   prelude = enumChunks
+                                       [ B.fromByteString $ S.replicate 2048 'h'
+                                       , B.fromByteString "\n", B.flush
+                                       , B.fromByteString "o\n", B.flush
+                                       ]
+                               run_ $ prelude >==> msgE outChan $$ iter
+                           )
 
-        _ -> return responseNotFound
-    _ -> return responseNotFound
+            _ -> return notFoundRsp
+        _ -> return notFoundRsp
+    _ -> return notFoundRsp
   where
     match (prefix, app) = (app, ) <$> stripPrefix prefix (pathInfo req)
+
     toChunks (Chunks xs) = xs
-    toChunks EOF = []
-    streamEnum :: StreamChan ByteString -> Enumerator Builder IO b
-    streamEnum chan = checkContinue0 $ \loop f -> do
-        mr <- liftIO $ readMsg chan
-        case mr of
-            Nothing -> f $ Chunks [fromByteString "c[3000,\"Go away!\"]\n", flush]
-            Just r -> f (Chunks [fromByteString r, flush]) >>== loop
+    toChunks EOF = error "read EOF"
 
-    streamRsp :: SessionId -> WSApp EmulateProtocol -> (Status -> Headers -> Iteratee Builder IO a) -> IO a
-    streamRsp sid app f = do
-        ec <- ensureSession msm sid app req
-        case ec of
-            Left c -> run_ $ liftIO (print "exists") >> f statusBadRequest []
-            Right (_, outChan) -> do
-                rsp <- S.concat . toChunks <$> readChan outChan
-                print rsp
-                -- TODO parse response
-                let iter = f statusOK
-                             [ ("Content-Type", "application/javascript; charset=UTF-8")
-                             , ("Set-Cookie", "JSESSIONID=dummy; path=/")
-                             , ("access-control-allow-origin", "*")
-                             , ("access-control-allow-credentials", "true")
+    chunkingTestE :: (Status -> Headers -> Iteratee Builder IO a) -> IO a
+    chunkingTestE f = run_ $ combined $$ iter
+      where
+        iter = f statusOK [ ("Content-Type", "application/javascript; charset=UTF-8")
+                          , ("access-control-allow-origin", "*")
+                          , ("access-control-allow-credentials", "true")
+                          ]
+        prelude = enumChunks [ B.fromByteString "h\n", B.flush
+                             , B.fromByteString $ S.replicate 2048 ' '
+                             , B.fromByteString "h\n", B.flush
                              ]
-                    enumPrelude = enumChunks [ fromByteString $ S.replicate 2048 'h'
-                                             , fromByteString "\n", flush
-                                             , fromByteString "o\n", flush
-                                             ]
-                run_ $ enumPrelude >==> streamEnum outChan $$ iter
+        step = enumChunks [B.fromByteString "h\n", B.flush]
+        combined = foldl (\enum ms -> enum >==> ioEnum (threadDelay $ ms*1000) >==> step)
+                         prelude
+                         [5, 25, 125, 625, 3125]
 
-chunkingTestEnum :: (Status -> Headers -> Iteratee Builder IO a) -> IO a
-chunkingTestEnum f = do
-    let iter = f statusOK
-                 [ ("Content-Type", "application/javascript; charset=UTF-8")
-                 , ("access-control-allow-origin", "*")
-                 , ("access-control-allow-credentials", "true")
-                 ]
-        enumPrelude = enumChunks [ fromByteString "h\n", flush
-                                 , fromByteString $ S.replicate 2048 ' '
-                                 , fromByteString "h\n", flush
-                                 ]
-        enumH = enumChunks [fromByteString "h\n", flush]
-        result = foldl (\enum ms -> enum >==> ioEnum (threadDelay $ ms*1000) >==> enumH) enumPrelude [5, 25, 125, 625, 3125]
-    run_ $ result $$ iter
+-- }}}
 
-ioEnum :: IO () -> Enumerator a IO b
-ioEnum io step = liftIO io >> E.returnI step
-
-enumSingle :: Monad m => a -> Enumerator a m b
-enumSingle c = enumChunks [c]
-
-enumChunks :: Monad m => [a] -> Enumerator a m b
-enumChunks xs = E.checkContinue0 $ \_ f -> f (E.Chunks xs) >>== E.returnI
-
-wsApp :: AppRoute Hybi00 -> WSApp Hybi00
-wsApp apps req = case msum $ map match apps of
+wsRoutes :: AppRoute Hybi00 -> WSApp Hybi00
+wsRoutes apps req = case msum $ map match apps of
     Just (app, [_,_,"websocket"]) -> app req
     _ -> WS.rejectRequest req "Forbidden!"
-
   where path = decodePathSegments $ WS.requestPath req
         match (prefix, app) = (app, ) <$> stripPrefix prefix path
 
-serverState :: TextProtocol p => MVar (ServerState p)
-serverState = unsafePerformIO $ newMVar M.empty
-
 httpRoutes :: [([Text], Application)] -> Application -> Application
-httpRoutes routes fallback req@Request{pathInfo=path} =
+httpRoutes routes fallback req =
     fromMaybe (fallback req) $ msum $ map match routes
   where
+    path = pathInfo req
     match (prefix, app) = case stripPrefix prefix path of
         Nothing -> Nothing
         Just rest -> Just $ app req{pathInfo=rest}
-
-staticApp :: Application
-staticApp = Static.staticApp Static.defaultFileServerSettings
-              -- { Static.ssFolder = Static.embeddedLookup $ Static.toEmbedded $(embedDir "static") }
-              { Static.ssFolder = Static.fileSystemLookup "static" }
-
-wsRoutes :: TextProtocol p => AppRoute p
-wsRoutes = [ ( ["echo"], echo )
-           --, ( ["chat"], chat serverState )
-           , ( ["close"], close )
-           ]
-
-main :: IO ()
-main = do
-    port <- read . fromMaybe "3000" . listToMaybe <$> getArgs
-    msm <- newMVar M.empty
-    runSettings defaultSettings
-           { settingsPort = port
-           , settingsIntercept = WaiWS.intercept (wsApp wsRoutes)
-           } $ httpRoutes [(["static"], staticApp)] (httpApp msm  wsRoutes)
 
