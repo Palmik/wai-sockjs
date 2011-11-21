@@ -7,8 +7,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Map (Map)
 import qualified Data.Map as M
-import qualified Data.Vector as V
-import Data.Aeson
 
 import Control.Exception
 import Control.Applicative
@@ -20,22 +18,12 @@ import Network.WebSockets
 
 import Sockjs
 
-data TestMessage = TestMessage Text
-
-instance FromJSON TestMessage where
-    parseJSON (Array xs)
-        | [x] <- V.toList xs = TestMessage <$> parseJSON x
-    parseJSON _ = fail "parse fail"
-
-instance ToJSON TestMessage where
-    toJSON (TestMessage msg) = toJSON [toJSON msg]
-
 echo :: TextProtocol p => Request -> WebSockets p ()
 echo req = do
     acceptRequest req
     forever $ do
-        (TestMessage msg) <- receiveJSON
-        sendJSON (TestMessage msg)
+        msg <- receiveData
+        sendTextData (msg::Text)
 
 close :: TextProtocol p => Request -> WebSockets p ()
 close req = do
@@ -51,34 +39,39 @@ chat :: TextProtocol p => MVar (ServerState p) -> Request -> WebSockets p ()
 chat state req = do
     acceptRequest req
     sink <- getSink
-    ["join", name] <- receiveJSON
+    msg <- receiveData
     clients <- liftIO $ readMVar state
-    case name of
-        _   | any ($ name)
+    case msg of
+        _   | not (prefix `T.isPrefixOf` msg) ->
+                sendTextData ("Wrong Annoucement!"::Text)
+            | any ($ name)
                 [T.null, T.any isPunctuation, T.any isSpace] ->
-                    sendJSON $ TestMessage $
+                    sendTextData $
                         "Name cannot " `mappend`
                         "contain punctuation or whitespace, and " `mappend`
-                        "cannot be empty"
+                        ("cannot be empty"::Text)
             | clientExists name clients ->
-                sendJSON $ TestMessage $ "User already exists"
+                sendTextData ("User already exists"::Text)
             | otherwise -> do
                 liftIO $ modifyMVar_ state $ \s -> do
                     let s' = M.insert name sink s
-                    sendSink sink $ jsonData $ TestMessage $
+                    sendSink sink $ textData $
                         "Welcome! Users: " `mappend`
                         T.intercalate ", " (M.keys s)
                     broadcast (name `mappend` " joined") s'
                     return s'
                 talk state name
+          where
+            prefix = "Hi! I'm "
+            name = T.drop (T.length prefix) msg
 
 broadcast :: TextProtocol p => Text -> ServerState p -> IO ()
 broadcast message clients =
-    mapM_ (flip sendSink (jsonData $ TestMessage message)) $ M.elems clients
+    mapM_ (flip sendSink (textData message)) $ M.elems clients
 
 talk :: TextProtocol p => MVar (ServerState p) -> Text -> WebSockets p ()
 talk state user = flip catchWsError catchDisconnect $ do
-    ["talk", msg] <- receiveJSON
+    msg <- receiveData
     liftIO $ readMVar state >>= broadcast
         (user `mappend` ": " `mappend` msg)
     talk state user

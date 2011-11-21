@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings, TupleSections #-}
 module Sockjs
   ( AppRoute
-  , sockjsApp
-  , httpRoutes
-  , wsRoutes
+  , sockjsRoute
+  , wsRoute
+  , httpRoute
   , receiveJSON
   , sendJSON
   , jsonData
@@ -19,6 +19,7 @@ import qualified Data.Map as M
 import Data.Monoid
 import Data.List
 import Data.Maybe
+import qualified Data.Vector as V
 
 import Control.Monad.IO.Class
 import Control.Monad
@@ -39,7 +40,7 @@ import qualified Blaze.ByteString.Builder as B
 
 import Data.Attoparsec.Lazy (parse, eitherResult)
 import qualified Data.Attoparsec.Enumerator as AE
-import Data.Aeson (encode, decode, FromJSON, ToJSON)
+import Data.Aeson
 
 import Network.HTTP.Types
 import Network.Wai
@@ -72,39 +73,54 @@ sendJSON x = sendTextData (encode x)
 jsonData :: (TextProtocol p, ToJSON a) => a -> Message p
 jsonData = DataMessage . Text . encode
 
+data SockjsMessage = SockjsMessage L.ByteString
+
+instance FromJSON SockjsMessage where
+    parseJSON (Array xs)
+        | [x] <- V.toList xs = SockjsMessage <$> parseJSON x
+    parseJSON _ = fail "parse fail"
+
+instance ToJSON SockjsMessage where
+    toJSON (SockjsMessage msg) = toJSON [toJSON msg]
+
 sendMsg :: StreamChan ByteString -> L.ByteString -> IO ()
 sendMsg chan = writeChan chan
-                 . Chunks
-                 . (:[])
-                 . B.toByteString
-                 . encodeFrame EmulateProtocol Nothing
-                 . Frame True BinaryFrame
+             . maybe EOF
+                     (\(SockjsMessage msg) ->
+                           Chunks
+                         . (:[])
+                         . B.toByteString
+                         . encodeFrame EmulateProtocol Nothing
+                         . Frame True BinaryFrame
+                         $ msg
+                     )
+             . decode
 
-receiveMsg :: StreamChan ByteString -> IO (Maybe ByteString)
+receiveMsg :: StreamChan ByteString -> IO (Maybe L.ByteString)
 receiveMsg chan = do
     stream <- readChan chan
     case stream of
         EOF -> trace "msg EOF" $ return Nothing
         Chunks xs ->
             either (error . show)
-                   (return . Just . S.concat . wrap . L.toChunks . framePayload)
+                   (return . Just . wrap . encode . SockjsMessage . framePayload)
                    (eitherResult . parse (decodeFrame EmulateProtocol) . L.fromChunks $ xs)
   where
-    wrap xs = ["a"]++xs++["\n"]
+    wrap x = L.concat ["a", x, "\n"]
 
 msgE :: StreamChan ByteString -> Enumerator Builder IO b
 msgE chan = checkContinue0 $ \loop f -> do
     mr <- liftIO $ receiveMsg chan
     case mr of
         Nothing -> f $ Chunks [B.fromByteString "c[3000,\"Go away!\"]\n", B.flush]
-        Just r -> f (Chunks [B.fromByteString r, B.flush]) >>== loop
+        Just r -> f (Chunks [B.fromLazyByteString r, B.flush]) >>== loop
 
 -- }}}
 
 -- response utils {{{
 
-response :: ByteString -> Response
-response s = ResponseBuilder statusOK [("Content-Type", "text/plain")] (B.fromByteString s)
+response :: L.ByteString -> Response
+response s = ResponseBuilder statusOK [("Content-Type", "text/plain")] (B.fromLazyByteString s)
 
 notFoundRsp :: Response
 notFoundRsp = ResponseBuilder statusNotFound [] (B.fromByteString "404/resource not found")
@@ -156,10 +172,10 @@ getSession msm sid = M.lookup sid <$> readMVar msm
 
 -- }}}
 
--- main application {{{
+-- main sockjs application {{{
 
-sockjsApp :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
-sockjsApp msm apps req = case (requestMethod req, msum (map match apps)) of
+sockjsRoute :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
+sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
     ("OPTIONS", Just _) -> return $ optionsRsp $ lookup "Origin" (requestHeaders req)
 
     ("POST", Just (app, path)) -> case path of
@@ -239,15 +255,15 @@ sockjsApp msm apps req = case (requestMethod req, msum (map match apps)) of
 
 -- }}}
 
-wsRoutes :: AppRoute Hybi00 -> WSApp Hybi00
-wsRoutes apps req = case msum $ map match apps of
+wsRoute :: AppRoute Hybi00 -> WSApp Hybi00
+wsRoute apps req = case msum $ map match apps of
     Just (app, [_,_,"websocket"]) -> app req
     _ -> WS.rejectRequest req "Forbidden!"
   where path = decodePathSegments $ WS.requestPath req
         match (prefix, app) = (app, ) <$> stripPrefix prefix path
 
-httpRoutes :: [([Text], Application)] -> Application -> Application
-httpRoutes routes fallback req =
+httpRoute :: [([Text], Application)] -> Application -> Application
+httpRoute routes fallback req =
     fromMaybe (fallback req) $ msum $ map match routes
   where
     path = pathInfo req

@@ -29,9 +29,9 @@ staticApp = Static.staticApp Static.defaultFileServerSettings
 
 wsApps :: TextProtocol p => AppRoute p
 wsApps = [ ( ["echo"], echo )
-           , ( ["chat"], chat serverState )
-           , ( ["close"], close )
-           ]
+         , ( ["chat"], chat serverState )
+         , ( ["close"], close )
+         ]
 
 main :: IO ()
 main = do
@@ -39,6 +39,6 @@ main = do
     msm <- newMVar M.empty
     runSettings defaultSettings
            { settingsPort = port
-           , settingsIntercept = WaiWS.intercept (wsRoutes wsApps)
-           } $ httpRoutes [(["static"], staticApp)] (sockjsApp msm wsApps)
+           , settingsIntercept = WaiWS.intercept (wsRoute wsApps)
+           } $ httpRoute [(["static"], staticApp)] (sockjsRoute msm wsApps)
 
