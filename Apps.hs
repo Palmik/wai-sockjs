@@ -5,6 +5,8 @@ import Data.Char
 import Data.Monoid
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as L
 import Data.Map (Map)
 import qualified Data.Map as M
 
@@ -16,32 +18,24 @@ import Control.Concurrent
 
 import Network.WebSockets
 
+import qualified Blaze.ByteString.Builder as B
+
+import Types
 import Sockjs
-
-receiveJSON :: (WS.TextProtocol p, FromJSON a) => WebSockets p a
-receiveJSON = do
-    msg <- receiveData
-    case decode msg of
-        Nothing -> throwWsError $ ParseError $ AE.ParseError [] ""
-        Just d -> return d
-
-sendJSON :: (WS.TextProtocol p, ToJSON a) => a -> WebSockets p ()
-sendJSON x = sendTextData (encode x)
-
-jsonData :: (TextProtocol p, ToJSON a) => a -> Message p
-jsonData = DataMessage . Text . encode
 
 echo :: TextProtocol p => Request -> WebSockets p ()
 echo req = do
     acceptRequest req
+    sendSockjs SockjsOpen
     forever $ do
-        msg <- receiveData
-        sendTextData (msg::Text)
+        msg <- receiveSockjs
+        when (not $ null msg) $ sendSockjs $ SockjsData (msg::[ByteString])
 
 close :: TextProtocol p => Request -> WebSockets p ()
 close req = do
     acceptRequest req
-    sendTextData ("c[3000,\"Go away!\"]"::Text)
+    sendSockjs SockjsOpen
+    sendSockjs $ SockjsClose 3000 "Go away!"
 
 type ServerState p = Map Text (Sink p) 
 
@@ -51,6 +45,7 @@ clientExists name = maybe False (const True) . M.lookup name
 chat :: TextProtocol p => MVar (ServerState p) -> Request -> WebSockets p ()
 chat state req = do
     acceptRequest req
+    sendSockjs SockjsOpen
     sink <- getSink
     msg <- receiveData
     clients <- liftIO $ readMVar state

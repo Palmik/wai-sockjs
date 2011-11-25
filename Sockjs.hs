@@ -4,8 +4,10 @@ module Sockjs
   , sockjsRoute
   , wsRoute
   , httpRoute
-  , receiveMsg
-  , sendMsg
+  , sendSockjs
+  , receiveSockjs
+  , deliverRsp
+  , deliverReq
   , serverErrorRsp
   ) where
 
@@ -17,11 +19,13 @@ import qualified Data.Map as M
 import Data.Monoid
 import Data.List
 import Data.Maybe
+import Data.Either
 
 import Control.Monad.IO.Class
 import Control.Monad
 import Control.Applicative
 import Control.Concurrent
+import Control.Concurrent.STM
 
 import Data.ByteString (ByteString)
 import Data.Text (Text)
@@ -38,7 +42,9 @@ import qualified Blaze.ByteString.Builder.Char8 as B
 
 import Data.Attoparsec.Lazy (parse, eitherResult)
 import qualified Data.Attoparsec.Enumerator as AE
+import qualified Data.Attoparsec.Lazy as L
 import Data.Aeson
+import Data.Aeson.Parser (value)
 
 import Network.HTTP.Types
 import Network.Wai
@@ -47,6 +53,31 @@ import Network.WebSockets hiding (Request, Response, requestHeaders)
 import qualified Network.WebSockets as WS
 import Network.WebSockets.Emulate
 
+import Types
+
+-- }}}
+
+-- sockjs websocket conversion {{{
+
+sendSockjs :: TextProtocol p => SockjsMessage -> WebSockets p ()
+sendSockjs = sendTextData . B.toLazyByteString . renderSockjs
+
+decodeValue :: (FromJSON a) => L.ByteString -> Maybe a
+decodeValue s = case L.parse value s of
+             L.Done _ v -> case fromJSON v of
+                             Success a -> Just a
+                             _         -> Nothing
+             _          -> Nothing
+
+receiveSockjs :: (TextProtocol p, FromJSON a) => WebSockets p [a]
+receiveSockjs = do
+    msg <- receiveData
+    liftIO $ print ("msg:", msg)
+    if L.null msg
+      then return []
+      else maybe (throwWsError $ SockjsError "Broken JSON encoding.")
+                 return
+                 (unSockjsRequest <$> decodeValue msg)
 -- }}}
 
 -- enumerator utils {{{
@@ -59,36 +90,58 @@ enumChunks xs = E.checkContinue0 $ \_ f -> f (E.Chunks xs) >>== E.returnI
 
 -- transport utils {{{
 
-sendMsg :: StreamChan ByteString -> L.ByteString -> IO (Maybe SockjsException)
-sendMsg chan = maybe (return $ Just SockjsInvalidJson)
-                     (\(SockjsMessage msg) ->
-                         ( writeChan chan
-                         . Chunks
-                         . (:[])
-                         . B.toByteString
-                         . encodeFrame EmulateProtocol Nothing
-                         . Frame True BinaryFrame
-                         ) msg >> return Nothing
-                     )
-             . decode
+deliverReq :: StreamChan ByteString -> L.ByteString -> IO ()
+deliverReq ch = atomically
+                . (writeTChan ch)
+                . Chunks
+                . (:[])
+                . B.toByteString
+                . encodeFrame EmulateProtocol Nothing
+                . Frame True BinaryFrame
 
-receiveMsg :: StreamChan ByteString -> IO (Either SockjsException L.ByteString)
-receiveMsg chan = do
-    stream <- readChan chan
+deliverRsp :: StreamChan ByteString -> IO (Either SockjsException L.ByteString)
+deliverRsp ch = do
+    stream <- atomically $ readTChan ch
     case stream of
-        EOF -> return $ Left SockjsClose
-        Chunks xs ->
-            either (return . Left . SockjsImpossible . ("internal broken encoding:"++) . show)
-                   (return . Right . wrap . encode . SockjsMessage . framePayload)
-                   (eitherResult . parse (decodeFrame EmulateProtocol) . L.fromChunks $ xs)
-  where
-    wrap x = L.concat ["a", x, "\n"]
+        EOF -> return $ Left SockjsReadEOF
+        Chunks xs -> return $ decodeRsp $ L.fromChunks xs
 
-msgE :: StreamChan ByteString -> Enumerator Builder IO b
-msgE chan = checkContinue0 $ \loop f -> do
-    mr <- liftIO $ receiveMsg chan
+decodeRsp :: L.ByteString -> Either SockjsException L.ByteString
+decodeRsp s = either (Left . SockjsError . ("internal broken encoding:"++) . show)
+                     (Right . (`mappend` "\n") . framePayload)
+                     (eitherResult . parse (decodeFrame EmulateProtocol) $ s)
+
+readAllTChan :: TChan a -> STM [a]
+readAllTChan ch = loop []
+  where
+    loop acc = do
+        e <- isEmptyTChan ch
+        if e then return acc
+             else do
+                 x <- readTChan ch
+                 loop (x:acc)
+
+deliverAllRsp :: StreamChan ByteString -> IO (Either SockjsException L.ByteString)
+deliverAllRsp ch = do
+    msgs <- atomically $ readAllTChan ch
+    let lbs = map eitherLBS msgs
+        results = map (>>= decodeRsp) lbs
+    case partitionEithers results of
+        ( (e:_), [] ) -> return $ Left e
+        ( _,     xs ) -> return $ maybe (Left $ SockjsError ("internal broken encoding.")) Right $ reEncode xs
+  where
+    eitherLBS :: Stream ByteString -> Either SockjsException L.ByteString
+    eitherLBS EOF = Left SockjsReadEOF
+    eitherLBS (Chunks xs) = Right $ L.fromChunks xs
+
+    reEncode :: [L.ByteString] -> Maybe L.ByteString
+    reEncode msgs = mapM decodeSockjsMessage msgs
+
+msgStream :: StreamChan ByteString -> Enumerator Builder IO b
+msgStream ch = checkContinue0 $ \loop f -> do
+    mr <- liftIO $ deliverRsp ch
     case mr of
-        Left _ -> f $ Chunks [B.fromByteString "c[3000,\"Go away!\"]\n", B.flush]
+        Left _ -> f $ Chunks $ (renderSockjs $ SockjsClose 3000 "Go away!") : [B.flush]
         Right r -> f (Chunks [B.fromLazyByteString r, B.flush]) >>== loop
 
 -- }}}
@@ -97,6 +150,10 @@ msgE chan = checkContinue0 $ \loop f -> do
 
 response :: L.ByteString -> Response
 response s = ResponseBuilder statusOK [("Content-Type", "text/plain")] (B.fromLazyByteString s)
+
+sockjsRsp :: SockjsMessage -> Response
+sockjsRsp msg = ResponseBuilder statusOK [("Content-Type", "application/javascript; charset=UTF-8")] $
+                    renderSockjs msg
 
 notFoundRsp :: Response
 notFoundRsp = ResponseBuilder statusNotFound [] (B.fromByteString "404/resource not found")
@@ -139,8 +196,8 @@ ensureSession msm sid app req = modifyMVar msm $ \sm ->
         Just old -> return (sm, Left old)
         Nothing -> do
             putStrLn "new session"
-            inChan <- newChan
-            outChan <- newChan
+            inChan <- newTChanIO
+            outChan <- newTChanIO
             let sm' = M.insert sid (inChan, outChan) sm
                 req' = RequestHttpPart (rawPathInfo req) (requestHeaders req)
             _ <- forkIO $ runEmulator inChan outChan req' app
@@ -164,15 +221,17 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
         [_, sid, path'] -> case path' of
             "xhr" ->
                 liftIO (ensureSession msm sid app req) >>=
-                either (\(_, outChan) -> liftIO $ do
-                           r <- either "c[3000,\"Go away!\"]\n" <$> receiveMsg outChan
-                           return $ response r
+                either (\(_, outChan) ->
+                           either (const $ sockjsRsp $ SockjsClose 3000 "Go away")
+                                  (response)
+                              <$> liftIO (deliverAllRsp outChan)
                        )
                        (\(_, outChan) -> liftIO $ do
-                           rsp <- readChan outChan
-                           print rsp
+                           rsp <- atomically $ readTChan outChan
                            -- TODO parse response
-                           return $ response "o\n"
+                           either (const $ sockjsRsp $ SockjsClose 3000 "Go away")
+                                  (response)
+                              <$> liftIO (deliverRsp outChan)
                        )
 
             "xhr_send" ->
@@ -181,7 +240,7 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
                       (\(inChan, _) -> do
                           msg <- L.fromChunks <$> EL.consume
                           when (L.null msg) $ error "payload expected."
-                          liftIO $ sendMsg inChan msg
+                          liftIO $ deliverReq inChan msg
                           return $ noContentRsp
                         `E.catchError` (\err -> return $ serverErrorRsp $ show err)
                       )
@@ -192,8 +251,7 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
                     either (const $ run_ $ liftIO (putStrLn "exists") >> f statusBadRequest [])
                            (\(_, outChan) -> do
                                -- read response
-                               rsp <- S.concat . toChunks <$> readChan outChan
-                               print rsp
+                               rsp <- S.concat . toChunks <$> atomically (readTChan outChan)
                                -- TODO parse response
                                let iter = f statusOK
                                        [ ("Content-Type", "application/javascript; charset=UTF-8")
@@ -204,9 +262,8 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
                                    prelude = enumChunks
                                        [ B.fromByteString $ S.replicate 2048 'h'
                                        , B.fromByteString "\n", B.flush
-                                       , B.fromByteString "o\n", B.flush
                                        ]
-                               run_ $ prelude >==> msgE outChan $$ iter
+                               run_ $ prelude >==> msgStream outChan $$ iter
                            )
 
             _ -> return notFoundRsp
