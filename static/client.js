@@ -5,6 +5,12 @@ function createSockjs(path) {
     return new SockJS(uri);
 }
 
+function log() {
+    if(window.console && console.log && console.log.apply) {
+        console.log.apply(console, arguments);
+    }
+}
+
 var users = [];
 
 function refreshUsers() {
@@ -15,7 +21,7 @@ function refreshUsers() {
 }
 
 function onMessage(event) {
-    console.log(event);
+    log(event);
     var p = $(document.createElement('p')).text(event.data);
 
     $('#messages').append(p);
@@ -42,15 +48,15 @@ $(document).ready(function () {
         var ws = createSockjs('/chat');
 
         ws.onopen = function() {
-            console.log('open');
+            log('open');
             ws.send('Hi! I am ' + user);
         };
         ws.onclose = function() {
-            console.log('closed');
+            log('closed');
         }
 
         ws.onmessage = function(event) {
-            console.log(event);
+            log(event);
             if(event.data.match('^Welcome! Users: ')) {
                 /* Calculate the list of initial users */
                 var str = event.data.replace(/^Welcome! Users: /, '');
