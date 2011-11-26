@@ -22,9 +22,7 @@ library
                , containers
                , http-types
                , wai
-               , warp
-               , websockets
-               , wai-websockets
+               , websockets >= 0.4 && < 0.5
                , wai-app-static
                , file-embed
                , enumerator
@@ -34,7 +32,7 @@ library
                , stm
 
 executable sockjs-example
-  ghc-options: -Wall -O3 -threaded
+  ghc-options: -Wall -O3 -threaded -static
   main-is: Main.hs
   build-depends: base >= 4.0 && < 5.0
                , transformers
@@ -45,9 +43,9 @@ executable sockjs-example
                , containers
                , http-types
                , wai
-               , warp
-               , websockets
-               , wai-websockets
+               , warp >= 0.4.6 && < 0.5
+               , websockets >= 0.4 && < 0.5
+               , wai-websockets >= 0.5 && < 0.6
                , wai-app-static
                , file-embed
                , enumerator
