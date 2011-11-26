@@ -1,11 +1,8 @@
-function createWebSocket(path) {
+function createSockjs(path) {
     var host = window.location.host;
     if(host == '') host = 'localhost';
     var uri = 'http://' + host + path;
     return new SockJS(uri);
-
-    // var Socket = "MozWebSocket" in window ? MozWebSocket : WebSocket;
-    // return new Socket(uri);
 }
 
 var users = [];
@@ -18,6 +15,7 @@ function refreshUsers() {
 }
 
 function onMessage(event) {
+    console.log(event);
     var p = $(document.createElement('p')).text(event.data);
 
     $('#messages').append(p);
@@ -41,7 +39,7 @@ $(document).ready(function () {
     $('#join-form').submit(function () {
         $('#warnings').html('');
         var user = $('#user').val();
-        var ws = createWebSocket('/chat');
+        var ws = createSockjs('/chat');
 
         ws.onopen = function() {
             console.log('open');

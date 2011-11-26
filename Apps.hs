@@ -3,22 +3,17 @@ module Apps where
 
 import Data.Char
 import Data.Monoid
-import Data.Text (Text)
-import qualified Data.Text as T
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Char8 as S
 import Data.Map (Map)
 import qualified Data.Map as M
 
 import Control.Exception
-import Control.Applicative
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Concurrent
 
 import Network.WebSockets
-
-import qualified Blaze.ByteString.Builder as B
 
 import Types
 import Sockjs
@@ -29,7 +24,7 @@ echo req = do
     sendSockjs SockjsOpen
     forever $ do
         msg <- receiveSockjs
-        when (not $ null msg) $ sendSockjs $ SockjsData (msg::[ByteString])
+        when (not $ S.null msg) $ sendSockjsData msg
 
 close :: TextProtocol p => Request -> WebSockets p ()
 close req = do
@@ -37,9 +32,9 @@ close req = do
     sendSockjs SockjsOpen
     sendSockjs $ SockjsClose 3000 "Go away!"
 
-type ServerState p = Map Text (Sink p) 
+type ServerState p = Map ByteString (Sink p) 
 
-clientExists :: Protocol p => Text -> ServerState p -> Bool
+clientExists :: Protocol p => ByteString -> ServerState p -> Bool
 clientExists name = maybe False (const True) . M.lookup name
 
 chat :: TextProtocol p => MVar (ServerState p) -> Request -> WebSockets p ()
@@ -47,39 +42,39 @@ chat state req = do
     acceptRequest req
     sendSockjs SockjsOpen
     sink <- getSink
-    msg <- receiveData
+    msg <- receiveSockjs
     clients <- liftIO $ readMVar state
     case msg of
-        _   | not (prefix `T.isPrefixOf` msg) ->
-                sendTextData ("Wrong Annoucement!"::Text)
+        _   | not (prefix `S.isPrefixOf` msg) ->
+                sendSockjsData "Wrong Annoucement!"
             | any ($ name)
-                [T.null, T.any isPunctuation, T.any isSpace] ->
-                    sendTextData $
+                [S.null, S.any isPunctuation, S.any isSpace] ->
+                    sendSockjsData $
                         "Name cannot " `mappend`
                         "contain punctuation or whitespace, and " `mappend`
-                        ("cannot be empty"::Text)
+                        "cannot be empty"
             | clientExists name clients ->
-                sendTextData ("User already exists"::Text)
+                sendSockjsData "User already exists"
             | otherwise -> do
                 liftIO $ modifyMVar_ state $ \s -> do
                     let s' = M.insert name sink s
-                    sendSink sink $ textData $
+                    sendSink sink $ sockjsData $
                         "Welcome! Users: " `mappend`
-                        T.intercalate ", " (M.keys s)
+                        S.intercalate ", " (M.keys s)
                     broadcast (name `mappend` " joined") s'
                     return s'
                 talk state name
           where
-            prefix = "Hi! I'm "
-            name = T.drop (T.length prefix) msg
+            prefix = "Hi! I am "
+            name = S.drop (S.length prefix) msg
 
-broadcast :: TextProtocol p => Text -> ServerState p -> IO ()
+broadcast :: TextProtocol p => ByteString -> ServerState p -> IO ()
 broadcast message clients =
-    mapM_ (flip sendSink (textData message)) $ M.elems clients
+    mapM_ (flip sendSink (sockjsData message)) $ M.elems clients
 
-talk :: TextProtocol p => MVar (ServerState p) -> Text -> WebSockets p ()
+talk :: TextProtocol p => MVar (ServerState p) -> ByteString -> WebSockets p ()
 talk state user = flip catchWsError catchDisconnect $ do
-    msg <- receiveData
+    msg <- receiveSockjs
     liftIO $ readMVar state >>= broadcast
         (user `mappend` ": " `mappend` msg)
     talk state user
