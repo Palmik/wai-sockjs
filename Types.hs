@@ -7,6 +7,7 @@ module Types
   , decodeSockjsMessage
   ) where
 
+import Debug.Trace
 import Prelude hiding ( (++) )
 import Data.Typeable
 import Data.Monoid
@@ -59,10 +60,11 @@ decodeValue s = case L.parse value s of
 decodeSockjsMessage :: L.ByteString -> Maybe SockjsMessage
 decodeSockjsMessage s = case L.uncons s of
     Just ('o', _) -> Just SockjsOpen 
+    Just ('h', _) -> Just SockjsHeartbeat 
     Just ('a', s') -> SockjsData <$> decodeValue s'
     Just ('c', s') -> do (code, reason) <- decodeValue s'
                          return $ SockjsClose code reason
-    _ -> Nothing
+    _ -> trace "unknown message." Nothing
 
 data SockjsException = SockjsReadEOF
                      | SockjsInvalidJson

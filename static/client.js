@@ -70,6 +70,7 @@ $(document).ready(function () {
                 $('#users-section').show();
 
                 ws.onmessage = onMessage;
+                ws.onheartbeat = function(ev) {log(ev);}
 
                 $('#message-form').submit(function () {
                     var text = $('#text').val();

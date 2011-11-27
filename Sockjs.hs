@@ -7,7 +7,9 @@ module Sockjs
   , sendSockjs
   , sendSockjsData
   , sockjsData
+  , sendSinkSockjs
   , receiveSockjs
+  , startHBThread
   , deliverRsp
   , deliverReq
   , serverErrorRsp
@@ -56,7 +58,7 @@ import Types
 
 -- }}}
 
--- sockjs websocket conversion {{{
+-- sockjs websocket utils {{{
 
 sendSockjs :: TextProtocol p => SockjsMessage -> WebSockets p ()
 sendSockjs = sendTextData . B.toLazyByteString . renderSockjs
@@ -66,6 +68,9 @@ sendSockjsData = sendSockjs . SockjsData . (:[])
 
 sockjsData :: (TextProtocol p, WebSocketsData a) => a -> Message p
 sockjsData = textData . B.toLazyByteString . renderSockjs . SockjsData . (:[]) . mconcat . L.toChunks . toLazyByteString
+
+sendSinkSockjs :: TextProtocol p => Sink p -> SockjsMessage -> IO ()
+sendSinkSockjs sink = sendSink sink . textData . B.toLazyByteString . renderSockjs
 
 receiveSockjs :: (TextProtocol p, FromJSON a, Monoid a) => WebSockets p a
 receiveSockjs = mconcat <$> receiveSockjs'
@@ -78,6 +83,14 @@ receiveSockjs' = do
       else maybe (throwWsError $ SockjsError "Broken JSON encoding.")
                  return
                  (unSockjsRequest <$> decode msg)
+
+startHBThread :: TextProtocol p => Int -> WebSockets p ThreadId
+startHBThread period = do
+    sink <- getSink
+    liftIO . forkIO . forever $ do
+        threadDelay (period*1000*1000)
+        sendSinkSockjs sink SockjsHeartbeat
+
 -- }}}
 
 -- enumerator utils {{{
@@ -155,6 +168,7 @@ deliverAllRsp ch = do
 msgStream :: StreamChan ByteString -> Enumerator Builder IO b
 msgStream ch = checkContinue0 $ \loop f -> do
     mr <- liftIO $ deliverRsp ch
+    liftIO $ print mr
     case mr of
         Left _ -> f $ Chunks $ (renderSockjs $ SockjsClose 3000 "Go away!") : [B.flush]
         Right r -> f (Chunks [B.fromLazyByteString r, B.flush]) >>== loop
@@ -174,7 +188,7 @@ hsAC origin  = [("access-control-max-age", "31536000")
                ,("access-control-allow-credentials", "true")]
 
 jsRsp :: L.ByteString -> Response
-jsRsp = ResponseBuilder statusOK hsJavascript . B.fromLazyByteString
+jsRsp s = traceShow s $ ResponseBuilder statusOK hsJavascript . B.fromLazyByteString $ s
 
 sockjsRsp :: SockjsMessage -> Response
 sockjsRsp msg = ResponseBuilder statusOK hsJavascript $

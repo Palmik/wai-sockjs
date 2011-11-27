@@ -21,6 +21,7 @@ import Sockjs
 echo :: TextProtocol p => Request -> WebSockets p ()
 echo req = do
     acceptRequest req
+    _ <- startHBThread 25
     sendSockjs SockjsOpen
     forever $ do
         msg <- receiveSockjs
@@ -63,6 +64,7 @@ chat state req = do
                         S.intercalate ", " (M.keys s)
                     broadcast (name `mappend` " joined") s'
                     return s'
+                hb <- startHBThread 25
                 talk state name
           where
             prefix = "Hi! I am "

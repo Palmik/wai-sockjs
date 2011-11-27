@@ -47,6 +47,6 @@ main = do
     msm <- newMVar M.empty
     runSettings defaultSettings
            { settingsPort = port
-           , settingsIntercept = WaiWS.intercept (wsRoute wsApps)
+           -- , settingsIntercept = WaiWS.intercept (wsRoute wsApps)
            } $ httpRoute [(["static"], staticApp)] (catchMiddleware $ sockjsRoute msm wsApps)
 
