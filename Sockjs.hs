@@ -24,7 +24,9 @@ import Data.Monoid
 import Data.List
 import Data.Maybe
 import Data.Either
+import Data.IORef
 
+import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad
 import Control.Applicative
@@ -78,11 +80,12 @@ receiveSockjs = mconcat <$> receiveSockjs'
 receiveSockjs' :: (TextProtocol p, FromJSON a) => WebSockets p [a]
 receiveSockjs' = do
     msg <- receiveData
-    if L.null msg
-      then return []
-      else maybe (throwWsError $ SockjsError "Broken JSON encoding.")
-                 return
-                 (unSockjsRequest <$> decode msg)
+    case msg of
+        mempty -> return []
+        "close" -> throwWsError ConnectionClosed
+        _ -> maybe (throwWsError $ SockjsError "Broken JSON encoding.")
+                   return
+                   (unSockjsRequest <$> decode msg)
 
 startHBThread :: TextProtocol p => Int -> WebSockets p ThreadId
 startHBThread period = do
@@ -219,7 +222,17 @@ optionsRsp morigin = ResponseBuilder statusNoContent
 -- sessions {{{
 
 type SessionId = Text
-type Session = (StreamChan ByteString, StreamChan ByteString)
+-- type Session = (StreamChan ByteString, StreamChan ByteString)
+data SessionStatus = StInit
+                   | StClosed
+    deriving (Eq)
+data Session = Session
+  { inChan :: StreamChan ByteString
+  , outChan :: StreamChan ByteString
+  , status :: IORef SessionStatus
+  , mainThread :: ThreadId
+  }
+
 type SessionMap = Map SessionId Session
 
 type WSApp p = WS.Request -> WebSockets p ()
@@ -234,10 +247,16 @@ ensureSession msm sid app req = modifyMVar msm $ \sm ->
             putStrLn "new session"
             inChan <- newTChanIO
             outChan <- newTChanIO
-            let sm' = M.insert sid (inChan, outChan) sm
-                req' = RequestHttpPart (rawPathInfo req) (requestHeaders req)
-            _ <- forkIO $ runEmulator inChan outChan req' app
-            return (sm', Right (inChan, outChan))
+            st <- newIORef StInit
+            thread <- forkIO $ do
+                let req' = RequestHttpPart (rawPathInfo req) (requestHeaders req)
+                runEmulator inChan outChan req' app
+                writeIORef st StClosed
+                threadDelay (5*1000*1000)
+                modifyMVar_ msm $ return . M.delete sid
+            let sm' = M.insert sid sess sm
+                sess = Session inChan outChan st thread
+            return (sm', Right sess)
 
 getSession :: MVar SessionMap -> SessionId -> IO (Maybe Session)
 getSession msm sid = M.lookup sid <$> readMVar msm
@@ -257,26 +276,32 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
         [_, sid, path'] -> case path' of
             "xhr" ->
                 liftIO (ensureSession msm sid app req) >>=
-                either (\(_, outChan) ->
-                           either (const $ sockjsRsp $ SockjsClose 3000 "Go away")
-                                  (jsRsp)
-                              <$> liftIO (deliverAllRsp outChan)
+                either (\sess -> liftIO $ do
+                           st <- readIORef (status sess)
+                           if st==StClosed
+                             then return $ sockjsRsp $ SockjsClose 3000 "Go away"
+                             else do
+                                 r <- deliverAllRsp (outChan sess)
+                                 either (\_ -> return . sockjsRsp $ SockjsClose 3000 "Go away")
+                                        (return . jsRsp)
+                                        r
                        )
-                       (\(_, outChan) -> liftIO $ do
-                           _ <- atomically $ readTChan outChan
+                       (\sess -> liftIO $ do
+                           _ <- atomically $ readTChan (outChan sess)
                            -- TODO parse response
                            either (const $ sockjsRsp $ SockjsClose 3000 "Go away")
                                   (jsRsp)
-                              <$> liftIO (deliverRsp outChan)
+                              <$> liftIO (deliverRsp (outChan sess))
                        )
+                -- TODO start lease
 
             "xhr_send" ->
                 liftIO (getSession msm sid) >>=
                 maybe (return notFoundRsp)
-                      (\(inChan, _) -> do
+                      (\sess -> do
                           msg <- L.fromChunks <$> EL.consume
                           when (L.null msg) $ error "payload expected."
-                          liftIO $ deliverReq inChan msg
+                          liftIO $ deliverReq (inChan sess) msg
                           return $ noContentRsp
                         `E.catchError` (\err -> trace "exc send" $ return $ serverErrorRsp $ show err)
                       )
@@ -285,9 +310,9 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
                 return $ ResponseEnumerator $ \f ->
                     ensureSession msm sid app req >>=
                     either (const $ run_ $ liftIO (putStrLn "exists") >> f statusBadRequest [])
-                           (\(_, outChan) -> do
+                           (\sess -> do
                                -- read response
-                               _ <- S.concat . toChunks <$> atomically (readTChan outChan)
+                               _ <- S.concat . toChunks <$> atomically (readTChan (outChan sess))
                                -- TODO parse response
                                let iter = f statusOK
                                        [ ("Content-Type", "application/javascript; charset=UTF-8")
@@ -299,7 +324,8 @@ sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
                                        [ B.fromByteString $ S.replicate 2048 'h'
                                        , B.fromByteString "\n", B.flush
                                        ]
-                               run_ $ prelude >==> msgStream outChan $$ iter
+                               run_ $ prelude >==> msgStream (outChan sess) $$ iter
+                               `finally` atomically (writeTChan (inChan sess) (Chunks ["close"]))
                            )
 
             _ -> return notFoundRsp

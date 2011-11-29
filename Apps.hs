@@ -21,7 +21,7 @@ import Sockjs
 echo :: TextProtocol p => Request -> WebSockets p ()
 echo req = do
     acceptRequest req
-    _ <- startHBThread 25
+    _ <- startHBThread 5
     sendSockjs SockjsOpen
     forever $ do
         msg <- receiveSockjs
@@ -64,7 +64,7 @@ chat state req = do
                         S.intercalate ", " (M.keys s)
                     broadcast (name `mappend` " joined") s'
                     return s'
-                hb <- startHBThread 25
+                hb <- startHBThread 5
                 talk state name
           where
             prefix = "Hi! I am "
@@ -84,6 +84,7 @@ talk state user = flip catchWsError catchDisconnect $ do
     catchDisconnect e = case fromException e of
         Just ConnectionClosed -> liftIO $ modifyMVar_ state $ \s -> do
             let s' = M.delete user s
+            putStrLn "catch closed"
             broadcast (user `mappend` " disconnected") s'
             return s'
         _ -> return ()
