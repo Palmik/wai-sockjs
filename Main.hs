@@ -6,6 +6,7 @@ import System.Environment (getArgs)
 
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.ByteString.Char8 as S
 
 import Control.Exception
 import Control.Applicative
@@ -39,7 +40,7 @@ wsApps = [ ( ["echo"], echo )
          ]
 
 catchMiddleware :: Application -> Application
-catchMiddleware app req = app req `E.catchError` (\err -> trace "exc" $ return $ serverErrorRsp $ show $ (fromException err :: Maybe IOException))
+catchMiddleware app req = app req `E.catchError` (\err -> trace "exc" $ return $ serverError $ S.pack $ show $ (fromException err :: Maybe IOException))
 
 main :: IO ()
 main = do

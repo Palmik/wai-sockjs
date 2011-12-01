@@ -10,9 +10,11 @@ module Sockjs
   , sendSinkSockjs
   , receiveSockjs
   , startHBThread
-  , deliverRsp
+  , getMessage
+  , getMessages
+  , streamMessages
   , deliverReq
-  , serverErrorRsp
+  , serverError
   ) where
 
 -- imports {{{
@@ -46,7 +48,7 @@ import Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as B
 import qualified Blaze.ByteString.Builder.Char8 as B
 
-import Data.Attoparsec.Lazy (parse, eitherResult)
+import Data.Attoparsec.Lazy (parse, maybeResult)
 import Data.Aeson
 
 import Network.HTTP.Types
@@ -106,75 +108,60 @@ enumChunks xs = E.checkContinue0 $ \_ f -> f (E.Chunks xs) >>== E.returnI
 
 -- transport utils {{{
 
-deliverReq :: StreamChan ByteString -> L.ByteString -> IO ()
-deliverReq ch = atomically
-                . (writeTChan ch)
+deliverReq :: Session -> L.ByteString -> IO ()
+deliverReq sess s = (>> putStrLn ("req:"++ show s)) . atomically
+                . (writeTChan (inChan sess))
                 . Chunks
                 . (:[])
                 . B.toByteString
                 . encodeFrame EmulateProtocol Nothing
-                . Frame True BinaryFrame
+                . Frame True BinaryFrame $ s
 
-parseFrame :: L.ByteString -> Either SockjsException L.ByteString
-parseFrame s = either (Left . SockjsError . ("internal broken encoding:"++) . show)
-                      (Right . framePayload)
-                      (eitherResult . parse (decodeFrame EmulateProtocol) $ s)
+parseFramePayload :: L.ByteString -> Maybe L.ByteString
+parseFramePayload = (framePayload <$>) . maybeResult . parse (decodeFrame EmulateProtocol)
 
-readAllTChan :: TChan a -> STM [a]
-readAllTChan ch = loop []
+readStreamChan :: StreamChan a -> STM [a]
+readStreamChan ch = loop []
   where
     loop acc = do
         e <- isEmptyTChan ch
         if e then return acc
              else do
                  x <- readTChan ch
-                 loop (x:acc)
+                 case x of
+                     EOF -> throwSTM SockjsReadEOF
+                     (Chunks xs) -> loop (xs++acc)
 
-deliverRsp :: StreamChan ByteString -> IO (Either SockjsException L.ByteString)
-deliverRsp ch = do
-    stream <- atomically $ readTChan ch
+getMessage :: Session -> IO (Maybe L.ByteString)
+getMessage sess = do
+    stream <- atomically $ readTChan (outChan sess)
     case stream of
-        EOF -> return $ Left SockjsReadEOF
-        Chunks xs -> return $ (`mappend` "\n") <$> parseFrame (L.fromChunks xs)
+        EOF -> return Nothing
+        Chunks xs -> return $ (`mappend` "\n") <$> parseFramePayload (L.fromChunks xs)
 
-deliverAllRsp :: StreamChan ByteString -> IO (Either SockjsException L.ByteString)
-deliverAllRsp ch = do
-    msgs <- atomically $ readAllTChan ch
-    let lbs = map eitherLBS msgs
-        results = map (>>= parseFrame) lbs
-    case partitionEithers results of
-        ( (e:_), [] ) -> return $ Left e
-        ( _,     xs ) -> return $ maybe (Left $ SockjsError ("internal broken encoding."))
-                                        (Right . (`mappend` "\n"))
-                                        (reEncode xs)
+getMessages :: Session -> IO [SockjsMessage]
+getMessages sess = do
+    xs <- atomically $ readStreamChan (outChan sess)
+    let m = mapM parseFramePayload (map (L.fromChunks . (:[])) xs) >>= mapM decodeSockjs
+    case m of
+        Nothing -> throw (SockjsError "Internal Encoding Error")
+        Just msgs -> return $ concatData msgs
   where
-    eitherLBS :: Stream ByteString -> Either SockjsException L.ByteString
-    eitherLBS EOF = Left SockjsReadEOF
-    eitherLBS (Chunks xs) = Right $ L.fromChunks xs
+    concatData :: [SockjsMessage] -> [SockjsMessage]
+    concatData = foldr combine []
+      where
+        combine (SockjsData s) (SockjsData s':xs) = SockjsData (s `mappend` s') : xs
+        combine x xs = x : xs
 
-    isData :: SockjsMessage -> Bool
-    isData (SockjsData _) = True
-    isData _ = False
-
-    concatData :: [SockjsMessage] -> SockjsMessage
-    concatData datas = SockjsData $ concat $ map extract datas 
-      where extract :: SockjsMessage -> [ByteString]
-            extract (SockjsData xs) = xs
-            extract _ = error "[concatData] impossible."
-
-    reEncode :: [L.ByteString] -> Maybe L.ByteString
-    reEncode msgs = do
-        msgs' <- mapM decodeSockjsMessage msgs
-        let (datas, others) = partition isData msgs'
-        return $ B.toLazyByteString . mconcat . map renderSockjs $ concatData datas : others
-
-msgStream :: StreamChan ByteString -> Enumerator Builder IO b
-msgStream ch = checkContinue0 $ \loop f -> do
-    mr <- liftIO $ deliverRsp ch
-    liftIO $ print mr
+streamMessages :: Session -> Enumerator Builder IO b
+streamMessages sess = checkContinue0 $ \loop f -> do
+    mr <- liftIO $ getMessage sess
     case mr of
-        Left _ -> f $ Chunks $ (renderSockjs $ SockjsClose 3000 "Go away!") : [B.flush]
-        Right r -> f (Chunks [B.fromLazyByteString r, B.flush]) >>== loop
+        Nothing -> throwError $ SockjsError "Internal Encoding Error"
+        -- Left _ -> f $ Chunks $ (renderSockjs $ SockjsClose 3000 "Go away!") : [B.flush]
+        Just r -> do
+            liftIO $ putStrLn $ "reply:"++show r
+            f (Chunks [B.fromLazyByteString r, B.flush]) >>== loop
 
 -- }}}
 
@@ -190,31 +177,27 @@ hsAC origin  = [("access-control-max-age", "31536000")
                ,("access-control-allow-origin", origin)
                ,("access-control-allow-credentials", "true")]
 
-jsRsp :: L.ByteString -> Response
-jsRsp s = traceShow s $ ResponseBuilder statusOK hsJavascript . B.fromLazyByteString $ s
+ok :: Headers -> Builder -> Response
+ok hs b = ResponseBuilder statusOK hs b
 
-sockjsRsp :: SockjsMessage -> Response
-sockjsRsp msg = ResponseBuilder statusOK hsJavascript $
-                    renderSockjs msg
+notFound :: Response
+notFound = ResponseBuilder statusNotFound [] mempty
 
-notFoundRsp :: Response
-notFoundRsp = ResponseBuilder statusNotFound [] (B.fromByteString "404/resource not found")
+notAllowed :: Response
+notAllowed = ResponseBuilder statusNotAllowed [] mempty
 
-notAllowedRsp :: Response
-notAllowedRsp = ResponseBuilder statusNotAllowed [] (B.fromByteString "405/method not allowed")
+noContent :: Response
+noContent = ResponseBuilder statusNoContent [] mempty
 
-noContentRsp :: Response
-noContentRsp = ResponseBuilder statusNoContent [] mempty
+serverError :: ByteString -> Response
+serverError msg = ResponseBuilder statusServerError [] (B.fromByteString msg)
 
-serverErrorRsp :: String -> Response
-serverErrorRsp msg = ResponseBuilder statusServerError [] (B.fromString msg)
-
-optionsRsp :: Maybe ByteString -> Response
-optionsRsp morigin = ResponseBuilder statusNoContent
+optionsRsp :: ByteString -> Response
+optionsRsp origin = ResponseBuilder statusNoContent
                      ( ("Allow", "OPTIONS, POST")
                      : hsCache
                     ++ hsCookie
-                    ++ hsAC (fromMaybe "*" morigin)
+                    ++ hsAC origin
                      ) mempty
 
 -- }}}
@@ -239,10 +222,10 @@ type WSApp p = WS.Request -> WebSockets p ()
 type AppRoute p = [([Text], WSApp p)]
 
 -- | create session if not exists, Left -> old session, Right -> new session.
-ensureSession :: MVar SessionMap -> SessionId -> WSApp EmulateProtocol -> Request -> IO (Either Session Session)
-ensureSession msm sid app req = modifyMVar msm $ \sm ->
+getOrCreateSession :: MVar SessionMap -> SessionId -> WSApp EmulateProtocol -> Request -> IO (Bool, Session)
+getOrCreateSession msm sid app req = modifyMVar msm $ \sm ->
     case M.lookup sid sm of
-        Just old -> return (sm, Left old)
+        Just old -> return (sm, (True, old))
         Nothing -> do
             putStrLn "new session"
             inChan <- newTChanIO
@@ -256,7 +239,7 @@ ensureSession msm sid app req = modifyMVar msm $ \sm ->
                 modifyMVar_ msm $ return . M.delete sid
             let sm' = M.insert sid sess sm
                 sess = Session inChan outChan st thread
-            return (sm', Right sess)
+            return (sm', (False, sess))
 
 getSession :: MVar SessionMap -> SessionId -> IO (Maybe Session)
 getSession msm sid = M.lookup sid <$> readMVar msm
@@ -267,91 +250,78 @@ getSession msm sid = M.lookup sid <$> readMVar msm
 
 sockjsRoute :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
 sockjsRoute msm apps req = case (requestMethod req, msum (map match apps)) of
-    ("OPTIONS", Just _) -> return $ optionsRsp $ lookup "Origin" (requestHeaders req)
+    ("OPTIONS", Just _) -> return $ optionsRsp $ fromMaybe "*" $ lookup "Origin" (requestHeaders req)
 
     ("POST", Just (app, path)) -> case path of
-        ["chunking_test"] ->
-            return $ ResponseEnumerator chunkingTestE
+        ["chunking_test"] -> return chunkingTest
 
         [_, sid, path'] -> case path' of
-            "xhr" ->
-                liftIO (ensureSession msm sid app req) >>=
-                either (\sess -> liftIO $ do
-                           st <- readIORef (status sess)
-                           if st==StClosed
-                             then return $ sockjsRsp $ SockjsClose 3000 "Go away"
-                             else do
-                                 r <- deliverAllRsp (outChan sess)
-                                 either (\_ -> return . sockjsRsp $ SockjsClose 3000 "Go away")
-                                        (return . jsRsp)
-                                        r
-                       )
-                       (\sess -> liftIO $ do
-                           _ <- atomically $ readTChan (outChan sess)
-                           -- TODO parse response
-                           either (const $ sockjsRsp $ SockjsClose 3000 "Go away")
-                                  (jsRsp)
-                              <$> liftIO (deliverRsp (outChan sess))
-                       )
+            "xhr" -> liftIO $ do
+                (_, sess) <- getOrCreateSession msm sid app req
+                msgs <- getMessages sess
+                let rsp = ok hsJavascript . mconcat . map renderSockjs $ msgs
                 -- TODO start lease
+                return rsp
 
             "xhr_send" ->
                 liftIO (getSession msm sid) >>=
-                maybe (return notFoundRsp)
+                maybe (return notFound)
                       (\sess -> do
-                          msg <- L.fromChunks <$> EL.consume
-                          when (L.null msg) $ error "payload expected."
-                          liftIO $ deliverReq (inChan sess) msg
-                          return $ noContentRsp
-                        `E.catchError` (\err -> trace "exc send" $ return $ serverErrorRsp $ show err)
+                          body <- L.fromChunks <$> EL.consume
+                          if (L.null body)
+                            then return $ serverError "payload expected."
+                            else do
+                              liftIO $ deliverReq sess body
+                              return noContent
                       )
 
-            "xhr_streaming" ->
-                return $ ResponseEnumerator $ \f ->
-                    ensureSession msm sid app req >>=
-                    either (const $ run_ $ liftIO (putStrLn "exists") >> f statusBadRequest [])
-                           (\sess -> do
-                               -- read response
-                               _ <- S.concat . toChunks <$> atomically (readTChan (outChan sess))
-                               -- TODO parse response
-                               let iter = f statusOK
-                                       [ ("Content-Type", "application/javascript; charset=UTF-8")
-                                       , ("Set-Cookie", "JSESSIONID=dummy; path=/")
-                                       , ("access-control-allow-origin", "*")
-                                       , ("access-control-allow-credentials", "true")
-                                       ]
-                                   prelude = enumChunks
-                                       [ B.fromByteString $ S.replicate 2048 'h'
-                                       , B.fromByteString "\n", B.flush
-                                       ]
-                               run_ $ prelude >==> msgStream (outChan sess) $$ iter
-                               `finally` atomically (writeTChan (inChan sess) (Chunks ["close"]))
-                           )
+            "xhr_streaming" -> return $ ResponseEnumerator $ \f -> do
+                (exists, sess) <- getOrCreateSession msm sid app req
+                flip finally (return ()) $ --(atomically (writeTChan (inChan sess) (Chunks ["close"]))) $
+                    run_ $ if exists
+                        then f statusBadRequest []
+                        else do
+                            -- read response
+                            _ <- S.concat . toChunks <$> liftIO (atomically (readTChan (outChan sess)))
+                            -- TODO parse response
+                            let iter = f statusOK
+                                    [ ("Content-Type", "application/javascript; charset=UTF-8")
+                                    , ("Set-Cookie", "JSESSIONID=dummy; path=/")
+                                    , ("access-control-allow-origin", "*")
+                                    , ("access-control-allow-credentials", "true")
+                                    ]
+                                prelude = enumChunks
+                                    [ B.fromByteString $ S.replicate 2048 'h'
+                                    , B.fromByteString "\n", B.flush
+                                    ]
+                            prelude >==> streamMessages sess $$ iter
 
-            _ -> return notFoundRsp
-        _ -> return notFoundRsp
-    _ -> return notFoundRsp
+            _ -> return notFound
+        _ -> return notFound
+    _ -> return notFound
   where
     match (prefix, app) = (app, ) <$> stripPrefix prefix (pathInfo req)
 
     toChunks (Chunks xs) = xs
     toChunks EOF = error "read EOF"
 
-    chunkingTestE :: (Status -> Headers -> Iteratee Builder IO a) -> IO a
-    chunkingTestE f = run_ $ combined $$ iter
+    chunkingTest :: Response
+    chunkingTest = ResponseEnumerator enum
       where
-        iter = f statusOK [ ("Content-Type", "application/javascript; charset=UTF-8")
-                          , ("access-control-allow-origin", "*")
-                          , ("access-control-allow-credentials", "true")
-                          ]
-        prelude = enumChunks [ B.fromByteString "h\n", B.flush
-                             , B.fromByteString $ S.replicate 2048 ' '
-                             , B.fromByteString "h\n", B.flush
-                             ]
-        step = enumChunks [B.fromByteString "h\n", B.flush]
-        combined = foldl (\enum ms -> enum >==> ioEnum (threadDelay $ ms*1000) >==> step)
-                         prelude
-                         [5, 25, 125, 625, 3125]
+        enum f = run_ $ chunkings $$ iter
+          where
+            iter = f statusOK [ ("Content-Type", "application/javascript; charset=UTF-8")
+                              , ("access-control-allow-origin", "*")
+                              , ("access-control-allow-credentials", "true")
+                              ]
+            prelude = enumChunks [ B.fromByteString "h\n", B.flush
+                                 , B.fromByteString $ S.replicate 2048 ' '
+                                 , B.fromByteString "h\n", B.flush
+                                 ]
+            step = enumChunks [B.fromByteString "h\n", B.flush]
+            chunkings = foldl (\enum ms -> enum >==> ioEnum (threadDelay $ ms*1000) >==> step)
+                              prelude
+                              [5, 25, 125, 625, 3125]
 
 -- }}}
 

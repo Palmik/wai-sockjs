@@ -4,7 +4,7 @@ module Types
   , renderSockjs
   , SockjsException (..)
   , SockjsRequest (..)
-  , decodeSockjsMessage
+  , decodeSockjs
   ) where
 
 import Debug.Trace
@@ -57,8 +57,8 @@ decodeValue s = case L.parse value s of
                              _         -> Nothing
              _          -> Nothing
 
-decodeSockjsMessage :: L.ByteString -> Maybe SockjsMessage
-decodeSockjsMessage s = case L.uncons s of
+decodeSockjs :: L.ByteString -> Maybe SockjsMessage
+decodeSockjs s = case L.uncons s of
     Just ('o', _) -> Just SockjsOpen 
     Just ('h', _) -> Just SockjsHeartbeat 
     Just ('a', s') -> SockjsData <$> decodeValue s'
