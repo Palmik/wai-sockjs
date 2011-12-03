@@ -49,7 +49,9 @@ import Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as B
 
 import qualified Data.Attoparsec.Lazy as L
-import Data.Aeson
+import Data.Aeson (json, FromJSON, Value(Array) )
+import Data.Digest.Pure.MD5 (md5)
+import Data.Serialize (encode)
 
 import Network.HTTP.Types
 import Network.Wai
@@ -183,12 +185,12 @@ optionsRsp req = ResponseBuilder statusNoContent
 iframeRsp :: Request -> Response
 iframeRsp req =
     case lookup "If-None-Match" (requestHeaders req) of
-        Just s | s==md5 -> notModified
+        Just s | s==hashed -> notModified
         _ -> ok (  hsHtml
                 ++ hsCache
-                ++ hsETag md5
+                ++ hsETag hashed
                 )
-                (B.fromByteString content)
+                (B.fromLazyByteString content)
   where
     content = "<!DOCTYPE html>\n\
 \<html>\n\
@@ -206,7 +208,7 @@ iframeRsp req =
 \  <p>This is a SockJS hidden iframe. It's used for cross domain magic.</p>\n\
 \</body>\n\
 \</html>"
-    md5 = "test"
+    hashed = encode $ md5 content
 -- }}}
 
 -- sessions {{{

@@ -29,7 +29,7 @@ staticApp = Static.staticApp Static.defaultFileServerSettings
 
 wsApps :: TextProtocol p => AppRoute p
 wsApps = [ ( ["echo"],                    (echo,             Nothing) )
-         , ( ["chat"],                    (chat serverState, Nothing) )
+         , ( ["chat"],                    (chat serverState, Just ["websocket"]) )
          , ( ["close"],                   (close,            Nothing) )
          , ( ["disabled_websocket_echo"], (echo,             Just ["websocket"]) )
          ]
