@@ -30,6 +30,7 @@ library
                , attoparsec-enumerator
                , aeson
                , stm
+               , cookie
 
 executable sockjs-example
   ghc-options: -Wall -O3 -threaded -static
@@ -53,4 +54,5 @@ executable sockjs-example
                , attoparsec-enumerator
                , aeson
                , stm
+               , cookie
 

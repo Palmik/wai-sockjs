@@ -5,6 +5,7 @@ module Types
   , SockjsException (..)
   , SockjsRequest (..)
   , decodeSockjs
+  , decodeValue
   ) where
 
 import Debug.Trace
@@ -27,6 +28,7 @@ import Control.Applicative
 (++) = mappend
 
 data SockjsRequest a = SockjsRequest { unSockjsRequest :: [a] }
+    deriving (Show) -- for debug
 
 instance FromJSON a => FromJSON (SockjsRequest a) where
     parseJSON js@(Array _) = SockjsRequest <$> parseJSON js
@@ -36,6 +38,7 @@ data SockjsMessage = SockjsOpen
                    | SockjsHeartbeat
                    | SockjsData [ByteString]
                    | SockjsClose Int ByteString
+    deriving (Show)
 
 renderSockjs :: SockjsMessage -> Builder
 renderSockjs msg = case msg of
@@ -64,10 +67,9 @@ decodeSockjs s = case L.uncons s of
     Just ('a', s') -> SockjsData <$> decodeValue s'
     Just ('c', s') -> do (code, reason) <- decodeValue s'
                          return $ SockjsClose code reason
-    _ -> trace "unknown message." Nothing
+    _ -> trace ("unknown message:"++show s) Nothing
 
 data SockjsException = SockjsReadEOF
-                     | SockjsInvalidJson
                      | SockjsError String
     deriving (Show, Typeable)
 

@@ -1,14 +1,10 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
-import Debug.Trace
-
 import System.IO.Unsafe (unsafePerformIO)
 import System.Environment (getArgs)
 
 import Data.Maybe
 import qualified Data.Map as M
-import qualified Data.ByteString.Char8 as S
 
-import Control.Exception
 import Control.Applicative
 import Control.Concurrent
 
@@ -19,8 +15,6 @@ import Network.WebSockets (TextProtocol)
 import Data.FileEmbed (embedDir)
 import qualified Network.Wai.Handler.WebSockets as WaiWS
 import qualified Network.Wai.Application.Static as Static
-
-import qualified Data.Enumerator as E
 
 import Sockjs
 import Apps (echo, chat, close, ServerState, chat)
@@ -34,20 +28,19 @@ staticApp = Static.staticApp Static.defaultFileServerSettings
               -- { Static.ssFolder = Static.fileSystemLookup "static" }
 
 wsApps :: TextProtocol p => AppRoute p
-wsApps = [ ( ["echo"], echo )
-         , ( ["chat"], chat serverState )
-         , ( ["close"], close )
+wsApps = [ ( ["echo"],                    (echo,             Nothing) )
+         , ( ["chat"],                    (chat serverState, Nothing) )
+         , ( ["close"],                   (close,            Nothing) )
+         , ( ["disabled_websocket_echo"], (echo,             Just ["websocket"]) )
          ]
-
-catchMiddleware :: Application -> Application
-catchMiddleware app req = app req `E.catchError` (\err -> trace "exc" $ return $ serverError $ S.pack $ show $ (fromException err :: Maybe IOException))
 
 main :: IO ()
 main = do
-    port <- read . fromMaybe "3000" . listToMaybe <$> getArgs
+    port <- read . fromMaybe "8080" . listToMaybe <$> getArgs
     msm <- newMVar M.empty
+    putStrLn $ "http://localhost:"++show port++"/static/client.html"
     runSettings defaultSettings
            { settingsPort = port
-           -- , settingsIntercept = WaiWS.intercept (wsRoute wsApps)
-           } $ httpRoute [(["static"], staticApp)] (catchMiddleware $ sockjsRoute msm wsApps)
+           , settingsIntercept = WaiWS.intercept (wsRoute wsApps)
+           } $ httpRoute [(["static"], staticApp)] (sockjsRoute msm wsApps)
 
