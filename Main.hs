@@ -24,8 +24,8 @@ serverState = unsafePerformIO $ newMVar M.empty
 
 staticApp :: Application
 staticApp = Static.staticApp Static.defaultFileServerSettings
-              { Static.ssFolder = Static.embeddedLookup $ Static.toEmbedded $(embedDir "static") }
-              -- { Static.ssFolder = Static.fileSystemLookup "static" }
+              -- { Static.ssFolder = Static.embeddedLookup $ Static.toEmbedded $(embedDir "static") }
+              { Static.ssFolder = Static.fileSystemLookup "static" }
 
 wsApps :: TextProtocol p => AppRoute p
 wsApps = [ ( ["echo"],                    (echo,             Nothing) )
