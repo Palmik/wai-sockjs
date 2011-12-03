@@ -31,6 +31,8 @@ library
                , aeson
                , stm
                , cookie
+               , pureMD5
+               , cereal
 
 executable sockjs-example
   ghc-options: -Wall -O3 -threaded -static
@@ -55,4 +57,6 @@ executable sockjs-example
                , aeson
                , stm
                , cookie
+               , pureMD5
+               , cereal
 
