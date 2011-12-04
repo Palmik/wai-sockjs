@@ -487,8 +487,7 @@ sockjsRoute msm apps req = case (requestMethod req, matchResult) of
                     case lookup "d" $ parseQuery (toStrict body) of
                         Just (Just s) -> toLazy s
                         _ -> mempty
-                "text/plain" -> body
-                _ -> error "unknown Content-Type"
+                _ -> body
 
         _ -> return $ notFound []
     _ -> return $ notFound []
