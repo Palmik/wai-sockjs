@@ -1,6 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TupleSections, ViewPatterns #-}
-{-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE OverloadedStrings, TupleSections, Rank2Types, ExistentialQuantification #-}
 module Sockjs
   ( AppRoute
   , sockjsRoute
@@ -20,8 +18,6 @@ module Sockjs
   ) where
 
 -- imports {{{
-
-import Debug.Trace
 
 import Prelude hiding (catch)
 import Data.Map (Map)
@@ -116,6 +112,9 @@ startHBThread = do
 toLazy :: ByteString -> L.ByteString
 toLazy = L.fromChunks . (:[])
 
+toStrict :: L.ByteString -> ByteString
+toStrict = S.concat . L.toChunks
+
 ifM :: Monad m => m Bool -> m a -> m a -> m a
 ifM mb m1 m2 = do
     b <- mb
@@ -184,15 +183,15 @@ noContent req = ResponseBuilder statusNoContent (hsPlain ++ hsCommon req) mempty
 serverError :: ByteString -> Response
 serverError msg = ResponseBuilder statusServerError [] (B.fromByteString msg)
 
-optionsRsp :: Request -> Response
-optionsRsp req = ResponseBuilder statusNoContent
+optionsResponse :: Request -> Response
+optionsResponse req = ResponseBuilder statusNoContent
                      ( ("Allow", "OPTIONS, POST")
                      : hsCache
                     ++ hsCommon req
                      ) mempty
 
-iframeRsp :: Request -> Response
-iframeRsp req =
+iframeResponse :: Request -> Response
+iframeResponse req =
     case lookup "If-None-Match" (requestHeaders req) of
         Just s | s==hashed -> notModified
         _ -> ok (  hsHtml
@@ -402,13 +401,13 @@ streamMessages ch maxsize wrap =
 
 sockjsRoute :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
 sockjsRoute msm apps req = case (requestMethod req, matchResult) of
-    ("OPTIONS", Just _) -> return $ optionsRsp req
+    ("OPTIONS", Just _) -> return $ optionsResponse req
 
     (m, Just ((app, disallows), path)) -> case (m, path) of
 
         ("GET", []) -> return $ ok hsPlain $ B.fromByteString "Welcome to SockJS!\n"
         ("GET", [""]) -> return $ ok hsPlain $ B.fromByteString "Welcome to SockJS!\n"
-        ("GET", [piece]) | isIframe piece -> return $ iframeRsp req
+        ("GET", [piece]) | isIframe piece -> return $ iframeResponse req
 
         ("POST", ["chunking_test"]) -> return chunkingTest
 
@@ -419,7 +418,7 @@ sockjsRoute msm apps req = case (requestMethod req, matchResult) of
               -> return $ notFound []
 
         ("POST", [_, sid, "xhr"]) ->
-            return $ streamRsp 0 sid app returnI hsJavascript newline
+            return $ streamResponse 0 sid app returnI hsJavascript newline
 
         ("POST", [_, sid, "xhr_streaming"]) ->
             let prelude = enumChunks
@@ -427,68 +426,22 @@ sockjsRoute msm apps req = case (requestMethod req, matchResult) of
                   , B.fromByteString "\n"
                   , B.flush
                   ]
-            in  return $ streamRsp streamResponseSize sid app prelude hsJavascript newline
-
-        ("POST", [_, sid, "xhr_send"]) ->
-            liftIO (M.lookup sid <$> readMVar msm) >>=
-            maybe (return $ notFound $ hsCookie req)
-                  (\sess ->
-                      ifM (liftIO $ readIORef $ closed sess)
-                          (return . sockjsOk req $ SockjsClose 3000 "Go away!")
-                          ( do
-                              body <- L.fromChunks <$> EL.consume
-                              if L.null body
-                                  then return $ serverError "Payload expected."
-                                  else case L.parse json body of
-                                      L.Done _ (Array _) -> do
-                                          liftIO $ passRequest sess body
-                                          return $ noContent req
-                                      _ -> return $ serverError "Broken JSON encoding."
-                          )
-                  )
+            in  return $ streamResponse streamResponseSize sid app prelude hsJavascript newline
 
         ("GET", [_, sid, "jsonp"]) ->
             case lookup "c" (queryString req) of
                 Just (Just cb) | not (S.null cb) -> do
-                    return $ streamRsp 0 sid app returnI hsJavascript $ \b ->
+                    return $ streamResponse 0 sid app returnI hsJavascript $ \b ->
                                mconcat [ B.fromByteString cb, B.fromByteString "("
                                        , B.fromLazyByteString $ encode $ B.toLazyByteString b
                                        , B.fromByteString ");\r\n"
                                        ]
                 _ -> return $ serverError "\"callback\" parameter required"
 
-        ("POST", [_, sid, "jsonp_send"]) -> do
-            msess <- liftIO (M.lookup sid <$> readMVar msm)
-            case msess of
-                Nothing -> return $ notFound $ hsCookie req
-                Just sess ->
-                    ifM (liftIO $ readIORef $ closed sess)
-                        (return . sockjsOk req $ SockjsClose 3000 "Go away!")
-                        ( do
-                            body <- mconcat <$> EL.consume
-                            let s = parse body
-                            if L.null s
-                              then return $ serverError "Payload expected."
-                              else case L.parse json s of
-                                     L.Done _ (Array _) -> do
-                                         liftIO $ passRequest sess s
-                                         return $ ok (hsCookie req) $ B.fromByteString "ok"
-                                     _ -> return $ serverError "Broken JSON encoding."
-                        )
-          where
-            ct = fromMaybe "application/x-www-form-urlencoded" $ lookup "Content-Type" $ requestHeaders req
-            parse body = case ct of
-                "application/x-www-form-urlencoded" ->
-                    case lookup "d" $ parseQuery body of
-                        Just (Just (toLazy -> s)) -> s
-                        _ -> mempty
-                "text/plain" -> toLazy body
-                _ -> error "unknown Content-Type"
-
         ("GET", [_, sid, "htmlfile"]) ->
             case lookup "c" (queryString req) of
                 Just (Just cb) | not (S.null cb) -> do
-                    return $ streamRsp streamResponseSize sid app (htmlfile cb) hsHtml $ \b ->
+                    return $ streamResponse streamResponseSize sid app (htmlfile cb) hsHtml $ \b ->
                                mconcat [ B.fromByteString "<script>\np("
                                        , B.fromLazyByteString $ encode $ B.toLazyByteString b
                                        , B.fromByteString ");\n</script>\r\n"
@@ -520,7 +473,22 @@ sockjsRoute msm apps req = case (requestMethod req, matchResult) of
                   , B.fromByteString "\r\n\r\n"
                   ]
                 prelude = enumChunks [B.fromByteString "\r\n", B.flush]
-            in  return $ streamRsp streamResponseSize sid app prelude hsEventStream wrap
+            in  return $ streamResponse streamResponseSize sid app prelude hsEventStream wrap
+
+        ("POST", [_, sid, "xhr_send"]) ->
+            handleSendRequest sid id noContent
+
+        ("POST", [_, sid, "jsonp_send"]) ->
+            handleSendRequest sid parse (\req' -> ok (hsCookie req') $ B.fromByteString "ok")
+          where
+            ct = fromMaybe "application/x-www-form-urlencoded" $ lookup "Content-Type" $ requestHeaders req
+            parse body = case ct of
+                "application/x-www-form-urlencoded" ->
+                    case lookup "d" $ parseQuery (toStrict body) of
+                        Just (Just s) -> toLazy s
+                        _ -> mempty
+                "text/plain" -> body
+                _ -> error "unknown Content-Type"
 
         _ -> return $ notFound []
     _ -> return $ notFound []
@@ -545,8 +513,8 @@ sockjsRoute msm apps req = case (requestMethod req, matchResult) of
                               prelude
                               [5, 25, 125, 625, 3125]
 
-    streamRsp :: Int64 -> SessionId -> WSApp EmulateProtocol -> (forall a. Enumerator Builder IO a) -> Headers -> (Builder -> Builder) -> Response
-    streamRsp rspsize sid app prelude headers wrap = ResponseEnumerator $ \f -> do
+    streamResponse :: Int64 -> SessionId -> WSApp EmulateProtocol -> (forall a. Enumerator Builder IO a) -> Headers -> (Builder -> Builder) -> Response
+    streamResponse rspsize sid app prelude headers wrap = ResponseEnumerator $ \f -> do
         sess <- getOrNewSession msm sid app req
         closed' <- readIORef (closed sess)
         liftIO $ putStrLn $ "closed:" ++ show closed'
@@ -572,6 +540,25 @@ sockjsRoute msm apps req = case (requestMethod req, matchResult) of
       where
         header f = f statusOK (headers ++ hsCommon req ++ hsNoCache)
 
+    handleSendRequest :: SessionId -> (L.ByteString -> L.ByteString) -> (Request -> Response) -> Iteratee ByteString IO Response
+    handleSendRequest sid bodyParser successResponse = do
+        msess <- liftIO (M.lookup sid <$> readMVar msm)
+        case msess of
+            Nothing -> return $ notFound $ hsCookie req
+            Just sess ->
+                ifM (liftIO $ readIORef $ closed sess)
+                    (return . sockjsOk req $ SockjsClose 3000 "Go away!")
+                    ( do
+                        body <- L.fromChunks <$> EL.consume
+                        let s = bodyParser body
+                        if L.null s
+                          then return $ serverError "Payload expected."
+                          else case L.parse json s of
+                                 L.Done _ (Array _) -> do
+                                     liftIO $ passRequest sess s
+                                     return $ successResponse req
+                                 _ -> return $ serverError "Broken JSON encoding."
+                    )
 -- }}}
 
 wsRoute :: AppRoute Hybi00 -> WSApp Hybi00
