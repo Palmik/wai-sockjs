@@ -73,7 +73,7 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
         ("GET", [ isIframe -> True ]) ->
             return $ iframeResponse req
         ("POST", ["chunking_test"]) ->
-            return chunkingTestResponse
+            return $ chunkingTestResponse req
 
         (_, [server, sid, path'])
           | maybe False (elem path') disallows ||
@@ -82,7 +82,7 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                 return $ notFound []
 
         ("POST", [_, sid, "xhr"]) ->
-            return $ streamResponse 0 sid app returnI hsJavascript newlineL
+            return $ streamResponse msm req 0 sid app returnI hsJavascript newlineL
 
         ("POST", [_, sid, "xhr_streaming"]) ->
             let prelude = enumChunks
@@ -90,16 +90,16 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                   , B.fromByteString "\n"
                   , B.flush
                   ]
-            in  return $ streamResponse responseLimit sid app prelude hsJavascript newlineL
+            in  return $ streamResponse msm req responseLimit sid app prelude hsJavascript newlineL
 
         ("GET", [_, sid, "jsonp"]) ->
             let wrap cb s = mconcat [toLazy cb, "(", encode s, ");\r\n"]
             in withCallback $ \cb -> 
-                   return $ streamResponse 0 sid app returnI hsJavascript (wrap cb)
+                   return $ streamResponse msm req 0 sid app returnI hsJavascript (wrap cb)
 
         ("GET", [_, sid, "htmlfile"]) ->
             withCallback $ \cb ->
-                return $ streamResponse responseLimit sid app (htmlfile cb) hsHtml wrap
+                return $ streamResponse msm req responseLimit sid app (htmlfile cb) hsHtml wrap
           where 
             wrap s = mconcat ["<script>\np(", encode s, ");\n</script>\r\n"]
             htmlfile cb = enumChunks
@@ -127,13 +127,13 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                   , "\r\n\r\n"
                   ]
                 prelude = enumChunks [B.fromByteString "\r\n", B.flush]
-            in  return $ streamResponse responseLimit sid app prelude hsEventStream wrap
+            in  return $ streamResponse msm req responseLimit sid app prelude hsEventStream wrap
 
         ("POST", [_, sid, "xhr_send"]) ->
-            handleSendRequest sid id noContent
+            handleSendRequest msm req sid id noContent
 
         ("POST", [_, sid, "jsonp_send"]) ->
-            handleSendRequest sid parse (\req' -> ok (hsCookie req') $ B.fromByteString "ok")
+            handleSendRequest msm req sid parse (\req' -> ok (hsCookie req') $ B.fromByteString "ok")
           where
             ct = fromMaybe "application/x-www-form-urlencoded" $ lookup "Content-Type" $ requestHeaders req
             parse body = case ct of
@@ -154,68 +154,6 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
     match (prefix, app) = (app, ) <$> stripPrefix prefix (pathInfo req)
 
     isIframe p = T.isPrefixOf "iframe" p && T.isSuffixOf ".html" p
-
-    chunkingTestResponse :: Response
-    chunkingTestResponse = ResponseEnumerator enum
-      where
-        enum f = run_ $ chunkings $$ iter
-          where
-            iter = f statusOK (hsJavascript ++ hsAC req)
-            prelude = enumChunks [ B.fromByteString "h\n", B.flush
-                                 , B.fromByteString $ S.replicate 2048 ' '
-                                 , B.fromByteString "h\n", B.flush
-                                 ]
-            step = enumChunks [B.fromByteString "h\n", B.flush]
-            chunkings = foldl (\e ms -> e >==> ioEnum (threadDelay $ ms*1000) >==> step)
-                              prelude
-                              [5, 25, 125, 625, 3125]
-
-    streamResponse :: Int64 -> SessionId -> WSApp EmulateProtocol -> (forall a. Enumerator Builder IO a) -> Headers -> (L.ByteString -> L.ByteString) -> Response
-    streamResponse rsplimit sid app prelude headers wrap = ResponseEnumerator $ \f -> do
-        sess <- getOrNewSession msm sid app req
-        closed' <- readIORef (closed sess)
-        liftIO $ putStrLn $ "closed:" ++ show closed'
-        if closed'
-          then run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 3000 "Go away!", B.flush]
-                   $$ header f
-          else tryModifyMVar (inited sess) 
-                  ( run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 2010 "Another connection still open", B.flush]
-                        $$ header f
-                  )
-                  (\inited' -> do
-                      if inited'
-                        then cancelTimer sess
-                        else do -- ignore response
-                          _ <- atomically $ readTChan $ outChan sess
-                          return ()
-                      let body = prelude >==> streamMessages (outChan sess) rsplimit wrap
-                      r <- run_ (body $$ header f)
-                           `catch` (\e -> atomically (writeTChan (inChan sess) EOF) >> throw (e::SomeException))
-                      startTimer sess
-                      return (True, r)
-                  )
-      where
-        header f = f statusOK (headers ++ hsCommon req ++ hsNoCache)
-
-    handleSendRequest :: SessionId -> (L.ByteString -> L.ByteString) -> (Request -> Response) -> Iteratee ByteString IO Response
-    handleSendRequest sid bodyParser successResponse = do
-        msess <- liftIO (M.lookup sid <$> readMVar msm)
-        case msess of
-            Nothing -> return $ notFound $ hsCookie req
-            Just sess ->
-                ifM (liftIO $ readIORef $ closed sess)
-                    (return . sockjsOk req $ SockjsClose 3000 "Go away!")
-                    ( do
-                        body <- L.fromChunks <$> EL.consume
-                        let s = bodyParser body
-                        if L.null s
-                          then return $ serverError "Payload expected."
-                          else case L.parse json s of
-                                 L.Done _ (Array _) -> do
-                                     liftIO $ passRequest sess s
-                                     return $ successResponse req
-                                 _ -> return $ serverError "Broken JSON encoding."
-                    )
 
 -- enumerator utils {{{
 
@@ -303,6 +241,21 @@ optionsResponse req = ResponseBuilder statusNoContent
                     ++ hsCommon req
                      ) mempty
 
+chunkingTestResponse :: Request -> Response
+chunkingTestResponse req = ResponseEnumerator enum
+  where
+    enum f = run_ $ chunkings $$ iter
+      where
+        iter = f statusOK (hsJavascript ++ hsAC req)
+        prelude = enumChunks [ B.fromByteString "h\n", B.flush
+                             , B.fromByteString $ S.replicate 2048 ' '
+                             , B.fromByteString "h\n", B.flush
+                             ]
+        step = enumChunks [B.fromByteString "h\n", B.flush]
+        chunkings = foldl (\e ms -> e >==> ioEnum (threadDelay $ ms*1000) >==> step)
+                          prelude
+                          [5, 25, 125, 625, 3125]
+
 iframeResponse :: Request -> Response
 iframeResponse req =
     case lookup "If-None-Match" (requestHeaders req) of
@@ -330,6 +283,54 @@ iframeResponse req =
 \</body>\n\
 \</html>"
     hashed = toStrict $ Binary.encode $ md5 content
+
+streamResponse :: MVar SessionMap -> Request -> Int64 -> SessionId -> WSApp EmulateProtocol -> (forall a. Enumerator Builder IO a) -> Headers -> (L.ByteString -> L.ByteString) -> Response
+streamResponse msm req rsplimit sid app prelude headers wrap = ResponseEnumerator $ \f -> do
+    sess <- getOrNewSession msm sid app req
+    closed' <- readIORef (closed sess)
+    liftIO $ putStrLn $ "closed:" ++ show closed'
+    if closed'
+      then run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 3000 "Go away!", B.flush]
+               $$ header f
+      else tryModifyMVar (inited sess) 
+              ( run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 2010 "Another connection still open", B.flush]
+                    $$ header f
+              )
+              (\inited' -> do
+                  if inited'
+                    then cancelTimer sess
+                    else do -- ignore response
+                      _ <- atomically $ readTChan $ outChan sess
+                      return ()
+                  let body = prelude >==> streamMessages (outChan sess) rsplimit wrap
+                  r <- run_ (body $$ header f)
+                       `catch` (\e -> atomically (writeTChan (inChan sess) EOF) >> throw (e::SomeException))
+                  startTimer sess
+                  return (True, r)
+              )
+  where
+    header f = f statusOK (headers ++ hsCommon req ++ hsNoCache)
+
+handleSendRequest :: MVar SessionMap -> Request -> SessionId -> (L.ByteString -> L.ByteString) -> (Request -> Response) -> Iteratee ByteString IO Response
+handleSendRequest msm req sid bodyParser successResponse = do
+    msess <- liftIO (M.lookup sid <$> readMVar msm)
+    case msess of
+        Nothing -> return $ notFound $ hsCookie req
+        Just sess ->
+            ifM (liftIO $ readIORef $ closed sess)
+                (return . sockjsOk req $ SockjsClose 3000 "Go away!")
+                ( do
+                    body <- L.fromChunks <$> EL.consume
+                    let s = bodyParser body
+                    if L.null s
+                      then return $ serverError "Payload expected."
+                      else case L.parse json s of
+                             L.Done _ (Array _) -> do
+                                 liftIO $ passRequest sess s
+                                 return $ successResponse req
+                             _ -> return $ serverError "Broken JSON encoding."
+                )
+
 -- }}}
 
 -- session utils {{{
