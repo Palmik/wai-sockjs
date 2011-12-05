@@ -1,4 +1,4 @@
-name:                sockjs
+name:                wai-sockjs
 version:             0.1.0.0
 synopsis:            sockjs server side, using warp and websockets
 homepage:            https://github.com/yihuang/wai-sockjs
@@ -10,8 +10,11 @@ category:            Web
 build-type:          Simple
 cabal-version:       >=1.8
 library
-  exposed-modules:   Sockjs, Types
-  other-modules:     Apps
+  exposed-modules: Network.Sockjs
+                 , Network.Sockjs.Types
+                 , Network.Sockjs.Timer
+                 , Network.Wai.Application.Sockjs
+  other-modules:     
   ghc-options:       -Wall
   build-depends: base >= 4.0 && < 5.0
                , transformers
@@ -32,7 +35,7 @@ library
                , stm
                , cookie
                , pureMD5
-               , cereal
+               , binary
 
 executable sockjs-example
   ghc-options: -Wall -O3 -threaded -static
@@ -58,5 +61,5 @@ executable sockjs-example
                , stm
                , cookie
                , pureMD5
-               , cereal
+               , binary
 

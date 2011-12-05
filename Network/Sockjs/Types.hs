@@ -1,5 +1,5 @@
 {-# LANGUAGE ExistentialQuantification, OverloadedStrings, DeriveDataTypeable #-}
-module Types
+module Network.Sockjs.Types
   ( SockjsMessage (..)
   , renderSockjs
   , SockjsException (..)

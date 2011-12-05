@@ -1,4 +1,4 @@
-module Timer where
+module Network.Sockjs.Timer where
 import Control.Concurrent
 
 type TimerId = ThreadId

@@ -15,8 +15,8 @@ import Control.Concurrent
 
 import Network.WebSockets
 
-import Types
-import Sockjs
+import Network.Sockjs.Types
+import Network.Sockjs
 
 echo :: TextProtocol p => Request -> WebSockets p ()
 echo req = do
