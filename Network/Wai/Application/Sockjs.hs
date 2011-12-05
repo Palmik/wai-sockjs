@@ -290,10 +290,10 @@ streamResponse msm req rsplimit sid app prelude headers wrap = ResponseEnumerato
     closed' <- readIORef (closed sess)
     liftIO $ putStrLn $ "closed:" ++ show closed'
     if closed'
-      then run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 3000 "Go away!", B.flush]
+      then run_ $ prelude >==> enumChunks [wrapB $ renderSockjs $ SockjsClose 3000 "Go away!", B.flush]
                $$ header f
       else tryModifyMVar (inited sess) 
-              ( run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 2010 "Another connection still open", B.flush]
+              ( run_ $ prelude >==> enumChunks [wrapB $ renderSockjs $ SockjsClose 2010 "Another connection still open", B.flush]
                     $$ header f
               )
               (\inited' -> do
@@ -310,6 +310,7 @@ streamResponse msm req rsplimit sid app prelude headers wrap = ResponseEnumerato
               )
   where
     header f = f statusOK (headers ++ hsCommon req ++ hsNoCache)
+    wrapB = B.fromLazyByteString . wrap . B.toLazyByteString
 
 handleSendRequest :: MVar SessionMap -> Request -> SessionId -> (L.ByteString -> L.ByteString) -> (Request -> Response) -> Iteratee ByteString IO Response
 handleSendRequest msm req sid bodyParser successResponse = do
