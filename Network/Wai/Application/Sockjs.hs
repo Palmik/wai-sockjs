@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TupleSections, Rank2Types, ExistentialQuantification #-}
+{-# LANGUAGE OverloadedStrings, TupleSections, ViewPatterns, Rank2Types, ExistentialQuantification #-}
 module Network.Wai.Application.Sockjs
   ( AppRoute
   , sockjsApp
@@ -57,8 +57,10 @@ import Network.Sockjs.Timer
 
 -- }}}
 
-streamResponseSize :: Int64
-streamResponseSize = 4096
+responseLimit :: Int64
+responseLimit = 128*1024
+
+type AppRoute p = [([Text], (WSApp p, Maybe [Text]))]
 
 sockjsApp :: MVar SessionMap -> AppRoute EmulateProtocol -> Application
 sockjsApp msm apps req = case (requestMethod req, matchResult) of
@@ -66,20 +68,21 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
 
     (m, Just ((app, disallows), path)) -> case (m, path) of
 
-        ("GET", []) -> return $ ok hsPlain $ B.fromByteString "Welcome to SockJS!\n"
-        ("GET", [""]) -> return $ ok hsPlain $ B.fromByteString "Welcome to SockJS!\n"
-        ("GET", [piece]) | isIframe piece -> return $ iframeResponse req
-
-        ("POST", ["chunking_test"]) -> return chunkingTest
+        ("GET", _) | path==[] || path==[""] ->
+            return $ ok hsPlain $ B.fromByteString "Welcome to SockJS!\n"
+        ("GET", [ isIframe -> True ]) ->
+            return $ iframeResponse req
+        ("POST", ["chunking_test"]) ->
+            return chunkingTestResponse
 
         (_, [server, sid, path'])
-          | T.null server || T.null sid || T.any (=='.') server || T.any (=='.') sid
-              -> return $ notFound []
-          | maybe False (elem path') disallows
-              -> return $ notFound []
+          | maybe False (elem path') disallows ||
+            T.null server || T.null sid ||
+            T.any (=='.') server || T.any (=='.') sid ->
+                return $ notFound []
 
         ("POST", [_, sid, "xhr"]) ->
-            return $ streamResponse 0 sid app returnI hsJavascript newline
+            return $ streamResponse 0 sid app returnI hsJavascript newlineL
 
         ("POST", [_, sid, "xhr_streaming"]) ->
             let prelude = enumChunks
@@ -87,54 +90,44 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                   , B.fromByteString "\n"
                   , B.flush
                   ]
-            in  return $ streamResponse streamResponseSize sid app prelude hsJavascript newline
+            in  return $ streamResponse responseLimit sid app prelude hsJavascript newlineL
 
         ("GET", [_, sid, "jsonp"]) ->
-            case lookup "c" (queryString req) of
-                Just (Just cb) | not (S.null cb) -> do
-                    return $ streamResponse 0 sid app returnI hsJavascript $ \b ->
-                               mconcat [ B.fromByteString cb, B.fromByteString "("
-                                       , B.fromLazyByteString $ encode $ B.toLazyByteString b
-                                       , B.fromByteString ");\r\n"
-                                       ]
-                _ -> return $ serverError "\"callback\" parameter required"
+            let wrap cb s = mconcat [toLazy cb, "(", encode s, ");\r\n"]
+            in withCallback $ \cb -> 
+                   return $ streamResponse 0 sid app returnI hsJavascript (wrap cb)
 
         ("GET", [_, sid, "htmlfile"]) ->
-            case lookup "c" (queryString req) of
-                Just (Just cb) | not (S.null cb) -> do
-                    return $ streamResponse streamResponseSize sid app (htmlfile cb) hsHtml $ \b ->
-                               mconcat [ B.fromByteString "<script>\np("
-                                       , B.fromLazyByteString $ encode $ B.toLazyByteString b
-                                       , B.fromByteString ");\n</script>\r\n"
-                                       ]
-                _ -> return $ serverError "\"callback\" parameter required"
+            withCallback $ \cb ->
+                return $ streamResponse responseLimit sid app (htmlfile cb) hsHtml wrap
           where 
-                htmlfile cb = enumChunks $
-                  [ B.fromByteString
-                      "<!doctype html>\n\
-                      \<html><head>\n\
-                      \  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n\
-                      \  <meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\n\
-                      \</head><body><h2>Don't panic!</h2>\n\
-                      \  <script>\n\
-                      \    document.domain = document.domain;\n\
-                      \    var c = parent.", B.fromByteString cb, B.fromByteString ";\n\
-                      \    c.start();\n\
-                      \    function p(d) {c.message(d);};\n\
-                      \    window.onload = function() {c.stop();};\n\
-                      \  </script>"
-                  , B.fromByteString $ S.replicate 658 ' '
-                  , B.flush
-                  ]
+            wrap s = mconcat ["<script>\np(", encode s, ");\n</script>\r\n"]
+            htmlfile cb = enumChunks
+                [ B.fromByteString
+                    "<!doctype html>\n\
+                    \<html><head>\n\
+                    \  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n\
+                    \  <meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\n\
+                    \</head><body><h2>Don't panic!</h2>\n\
+                    \  <script>\n\
+                    \    document.domain = document.domain;\n\
+                    \    var c = parent.", B.fromByteString cb, B.fromByteString ";\n\
+                    \    c.start();\n\
+                    \    function p(d) {c.message(d);};\n\
+                    \    window.onload = function() {c.stop();};\n\
+                    \  </script>"
+                , B.fromByteString $ S.replicate 658 ' ' -- ensure 1024 length
+                , B.flush
+                ]
 
         ("GET", [_, sid, "eventsource"]) ->
             let wrap b = mconcat
-                  [ B.fromByteString "data: "
+                  [ "data: "
                   , b
-                  , B.fromByteString "\r\n\r\n"
+                  , "\r\n\r\n"
                   ]
                 prelude = enumChunks [B.fromByteString "\r\n", B.flush]
-            in  return $ streamResponse streamResponseSize sid app prelude hsEventStream wrap
+            in  return $ streamResponse responseLimit sid app prelude hsEventStream wrap
 
         ("POST", [_, sid, "xhr_send"]) ->
             handleSendRequest sid id noContent
@@ -153,13 +146,17 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
         _ -> return $ notFound []
     _ -> return $ notFound []
   where
+    withCallback f = case lookup "c" (queryString req) of
+        Just (Just cb) | not (S.null cb) -> f cb
+        _ -> return $ serverError "\"callback\" parameter required"
+
     matchResult = msum (map match apps)
     match (prefix, app) = (app, ) <$> stripPrefix prefix (pathInfo req)
 
     isIframe p = T.isPrefixOf "iframe" p && T.isSuffixOf ".html" p
 
-    chunkingTest :: Response
-    chunkingTest = ResponseEnumerator enum
+    chunkingTestResponse :: Response
+    chunkingTestResponse = ResponseEnumerator enum
       where
         enum f = run_ $ chunkings $$ iter
           where
@@ -173,16 +170,16 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                               prelude
                               [5, 25, 125, 625, 3125]
 
-    streamResponse :: Int64 -> SessionId -> WSApp EmulateProtocol -> (forall a. Enumerator Builder IO a) -> Headers -> (Builder -> Builder) -> Response
-    streamResponse rspsize sid app prelude headers wrap = ResponseEnumerator $ \f -> do
+    streamResponse :: Int64 -> SessionId -> WSApp EmulateProtocol -> (forall a. Enumerator Builder IO a) -> Headers -> (L.ByteString -> L.ByteString) -> Response
+    streamResponse rsplimit sid app prelude headers wrap = ResponseEnumerator $ \f -> do
         sess <- getOrNewSession msm sid app req
         closed' <- readIORef (closed sess)
         liftIO $ putStrLn $ "closed:" ++ show closed'
         if closed'
-          then run_ $ prelude >==> enumChunks [wrap $ renderSockjs $ SockjsClose 3000 "Go away!", B.flush]
+          then run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 3000 "Go away!", B.flush]
                    $$ header f
           else tryModifyMVar (inited sess) 
-                  ( run_ $ prelude >==> enumChunks [wrap $ renderSockjs $ SockjsClose 2010 "Another connection still open", B.flush]
+                  ( run_ $ prelude >==> enumChunks [B.fromLazyByteString . wrap . B.toLazyByteString . renderSockjs $ SockjsClose 2010 "Another connection still open", B.flush]
                         $$ header f
                   )
                   (\inited' -> do
@@ -191,7 +188,7 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                         else do -- ignore response
                           _ <- atomically $ readTChan $ outChan sess
                           return ()
-                      let body = prelude >==> streamMessages (outChan sess) rspsize wrap
+                      let body = prelude >==> streamMessages (outChan sess) rsplimit wrap
                       r <- run_ (body $$ header f)
                            `catch` (\e -> atomically (writeTChan (inChan sess) EOF) >> throw (e::SomeException))
                       startTimer sess
@@ -242,8 +239,11 @@ enumChunks xs = E.checkContinue0 $ \_ f -> f (E.Chunks xs) >>== E.returnI
 
 -- response utils {{{
 
-newline :: Builder -> Builder
-newline = (`mappend` B.fromByteString "\n")
+newlineL :: L.ByteString -> L.ByteString
+newlineL = (`mappend` "\n")
+
+newlineB :: Builder -> Builder
+newlineB = (`mappend` B.fromByteString "\n")
 
 hsJavascript, hsPlain, hsHtml, hsEventStream, hsCache, hsNoCache :: Headers
 hsJavascript  = [("Content-Type", "application/javascript; charset=UTF-8")]
@@ -279,7 +279,7 @@ jsOk :: Request -> Builder -> Response
 jsOk req = ok (hsJavascript ++ hsCommon req)
 
 sockjsOk :: Request -> SockjsMessage -> Response
-sockjsOk req = jsOk req . newline . renderSockjs
+sockjsOk req = jsOk req . newlineB . renderSockjs
 
 notFound :: Headers -> Response
 notFound hs = ResponseBuilder statusNotFound hs mempty
@@ -440,71 +440,29 @@ passRequest sess s = atomically
                 . encodeFrame EmulateProtocol Nothing
                 . Frame True BinaryFrame $ s
 
-parseFramePayload :: L.ByteString -> Maybe L.ByteString
-parseFramePayload = (framePayload <$>) . L.maybeResult . L.parse (decodeFrame EmulateProtocol)
+parseFramePayload :: L.ByteString -> L.ByteString
+parseFramePayload = fromMaybe (error "Internal Encoding Error [downstream]") .
+                        (framePayload <$>) . L.maybeResult . L.parse (decodeFrame EmulateProtocol)
 
-getContentsChan :: StreamChan a -> STM [a]
-getContentsChan ch = loop []
-  where
-    loop acc = do
-        e <- isEmptyTChan ch
-        if e then return acc
-             else do
-                 x <- readTChan ch
-                 case x of
-                     EOF -> return acc
-                     (Chunks xs) -> loop (xs++acc)
+limit :: Monad m => Int64 -> Enumeratee L.ByteString L.ByteString m b
+limit n step | n <= 0 = return step
+limit n (Continue k) = continue loop where
+    loop (Chunks []) = continue loop
+    loop (Chunks xs) = iter where
+        len = L.length (L.concat xs)
+        iter = if len <= n
+            then k (Chunks xs) >>== limit (n - len)
+            else k (Chunks xs) >>== (`E.yield` Chunks [])
+    loop EOF = k EOF >>== (`E.yield` EOF)
+limit _ step = return step
 
-getMessages :: StreamChan ByteString -> IO [SockjsMessage]
-getMessages ch = do
-    xs <- atomically $
-            ifM (isEmptyTChan ch)
-                (streamToList <$> readTChan ch)
-                (getContentsChan ch)
-    if null xs
-      then return []
-      else do
-        let m = mapM (parseFramePayload . toLazy) xs >>= mapM decodeSockjs
-        case m of
-            Nothing -> throw (SockjsError "Internal Encoding Error Downstream")
-            Just msgs -> return $ concatData msgs
-  where
-    concatData :: [SockjsMessage] -> [SockjsMessage]
-    concatData = foldr combine [] . reverse
-      where
-        combine (SockjsData s) (SockjsData s':xs) = SockjsData (s ++ s') : xs
-        combine x xs = x : xs
-
-    streamToList (Chunks xs) = xs
-    streamToList EOF = []
-
-withSize :: Monad m
-            => (Int64
-             -> (Int64 -> Enumerator a m b)
-             -> (Stream a -> Iteratee a m b)
-             -> Iteratee a m b)
-            -> Enumerator a m b
-withSize inner = loop 0 where
-    loop acc (Continue k) = inner acc loop k
-    loop _ step = returnI step
-
-streamMessages :: StreamChan ByteString -> Int64 -> (Builder -> Builder) -> Enumerator Builder IO b
-streamMessages ch maxsize wrap =
-    withSize $ \acc loop f -> do
-        msgs <- liftIO $ getMessages ch
-        if null msgs
-          then f $ Chunks [wrap $ renderSockjs $ SockjsClose 3000 "Go away!", B.flush]
-          else do
-            let strs = map (B.toLazyByteString . wrap . renderSockjs) msgs
-            let iter = f $ Chunks $ concatMap ((:[B.flush]) . B.fromLazyByteString) strs
-            let acc' = acc + sum (map L.length strs)
-            if acc' >= maxsize
-              then iter
-              else iter >>== loop acc'
+streamMessages :: StreamChan ByteString -> Int64 -> (L.ByteString -> L.ByteString) -> Enumerator Builder IO b
+streamMessages ch n wrap = enumChan ch
+                        $= EL.map (wrap . parseFramePayload . toLazy)
+                        $= limit n
+                        $= EL.concatMap ((:[B.flush]) . B.fromLazyByteString)
 
 -- }}}
-
-type AppRoute p = [([Text], (WSApp p, Maybe [Text]))]
 
 websocketApp :: AppRoute Hybi00 -> WSApp Hybi00
 websocketApp apps req = case msum $ map match apps of
