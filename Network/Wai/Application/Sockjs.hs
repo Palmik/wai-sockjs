@@ -82,7 +82,7 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                 return $ notFound []
 
         ("POST", [_, sid, "xhr"]) ->
-            return $ streamResponse msm req 0 sid app returnI hsJavascript newlineL
+            return $ streamResponse msm req 1 sid app returnI hsJavascript newlineL
 
         ("POST", [_, sid, "xhr_streaming"]) ->
             let prelude = enumChunks
@@ -95,7 +95,7 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
         ("GET", [_, sid, "jsonp"]) ->
             let wrap cb s = mconcat [toLazy cb, "(", encode s, ");\r\n"]
             in withCallback $ \cb -> 
-                   return $ streamResponse msm req 0 sid app returnI hsJavascript (wrap cb)
+                   return $ streamResponse msm req 1 sid app returnI hsJavascript (wrap cb)
 
         ("GET", [_, sid, "htmlfile"]) ->
             withCallback $ \cb ->
