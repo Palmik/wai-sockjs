@@ -82,7 +82,7 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                 return $ notFound []
 
         ("POST", [_, sid, "xhr"]) ->
-            return $ streamResponse msm req 1 sid app returnI hsJavascript newlineL
+            downstream msm 1 sid app returnI hsJavascript newlineL req
 
         ("POST", [_, sid, "xhr_streaming"]) ->
             let prelude = enumChunks
@@ -90,16 +90,16 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                   , B.fromByteString "\n"
                   , B.flush
                   ]
-            in  return $ streamResponse msm req responseLimit sid app prelude hsJavascript newlineL
+            in  downstream msm responseLimit sid app prelude hsJavascript newlineL req
 
         ("GET", [_, sid, "jsonp"]) ->
             let wrap cb s = mconcat [toLazy cb, "(", encode s, ");\r\n"]
             in withCallback $ \cb -> 
-                   return $ streamResponse msm req 1 sid app returnI hsJavascript (wrap cb)
+                   downstream msm 1 sid app returnI hsJavascript (wrap cb) req
 
         ("GET", [_, sid, "htmlfile"]) ->
             withCallback $ \cb ->
-                return $ streamResponse msm req responseLimit sid app (htmlfile cb) hsHtml wrap
+                downstream msm responseLimit sid app (htmlfile cb) hsHtml wrap req
           where 
             wrap s = mconcat ["<script>\np(", encode s, ");\n</script>\r\n"]
             htmlfile cb = enumChunks
@@ -127,13 +127,13 @@ sockjsApp msm apps req = case (requestMethod req, matchResult) of
                   , "\r\n\r\n"
                   ]
                 prelude = enumChunks [B.fromByteString "\r\n", B.flush]
-            in  return $ streamResponse msm req responseLimit sid app prelude hsEventStream wrap
+            in  downstream msm responseLimit sid app prelude hsEventStream wrap req
 
         ("POST", [_, sid, "xhr_send"]) ->
-            handleSendRequest msm req sid id noContent
+            upstream msm sid id noContent req
 
         ("POST", [_, sid, "jsonp_send"]) ->
-            handleSendRequest msm req sid parse (\req' -> ok (hsCookie req') $ B.fromByteString "ok")
+            upstream msm sid parse (\req' -> ok (hsCookie req') $ B.fromByteString "ok") req
           where
             ct = fromMaybe "application/x-www-form-urlencoded" $ lookup "Content-Type" $ requestHeaders req
             parse body = case ct of
@@ -284,8 +284,16 @@ iframeResponse req =
 \</html>"
     hashed = toStrict $ Binary.encode $ md5 content
 
-streamResponse :: MVar SessionMap -> Request -> Int64 -> SessionId -> WSApp EmulateProtocol -> (forall a. Enumerator Builder IO a) -> Headers -> (L.ByteString -> L.ByteString) -> Response
-streamResponse msm req rsplimit sid app prelude headers wrap = ResponseEnumerator $ \f -> do
+-- | pass data from outChan to client streamlined.
+downstream :: MVar SessionMap
+           -> Int64 -- response size limit, when exceeded, close connection, client will reconnect automitically.
+           -> SessionId
+           -> WSApp EmulateProtocol -- the websocket app to run if not exists.
+           -> (forall a. Enumerator Builder IO a) -- prelude data to send.
+           -> Headers -- extra response headers, e.g. content-type.
+           -> (L.ByteString -> L.ByteString) -- wraper for response message.
+           -> Application
+downstream msm rsplimit sid app prelude headers wrap req = return $ ResponseEnumerator $ \f -> do
     sess <- getOrNewSession msm sid app req
     closed' <- readIORef (closed sess)
     liftIO $ putStrLn $ "closed:" ++ show closed'
@@ -302,7 +310,7 @@ streamResponse msm req rsplimit sid app prelude headers wrap = ResponseEnumerato
                     else do -- ignore response
                       _ <- atomically $ readTChan $ outChan sess
                       return ()
-                  let body = prelude >==> streamMessages (outChan sess) rsplimit wrap
+                  let body = prelude >==> messages (outChan sess)
                   r <- run_ (body $$ header f)
                        `catch` (\e -> atomically (writeTChan (inChan sess) EOF) >> throw (e::SomeException))
                   startTimer sess
@@ -312,46 +320,54 @@ streamResponse msm req rsplimit sid app prelude headers wrap = ResponseEnumerato
     header f = f statusOK (headers ++ hsCommon req ++ hsNoCache)
     wrapB = B.fromLazyByteString . wrap . B.toLazyByteString
 
-handleSendRequest :: MVar SessionMap -> Request -> SessionId -> (L.ByteString -> L.ByteString) -> (Request -> Response) -> Iteratee ByteString IO Response
-handleSendRequest msm req sid bodyParser successResponse = do
-    msess <- liftIO (M.lookup sid <$> readMVar msm)
-    case msess of
-        Nothing -> return $ notFound $ hsCookie req
-        Just sess ->
-            ifM (liftIO $ readIORef $ closed sess)
-                (return . sockjsOk req $ SockjsClose 3000 "Go away!")
-                ( do
-                    body <- L.fromChunks <$> EL.consume
-                    let s = bodyParser body
-                    if L.null s
-                      then return $ serverError "Payload expected."
-                      else case L.parse json s of
-                             L.Done _ (Array _) -> do
-                                 liftIO $ passRequest sess s
-                                 return $ successResponse req
-                             _ -> return $ serverError "Broken JSON encoding."
-                )
+    messages :: StreamChan ByteString -> Enumerator Builder IO b
+    messages ch = enumChan ch
+               $= EL.map (wrap . parseFramePayload . toLazy)
+               $= limit rsplimit
+               $= EL.concatMap ((:[B.flush]) . B.fromLazyByteString)
+
+upstream :: MVar SessionMap
+         -> SessionId
+         -> (L.ByteString -> L.ByteString) -- parse payload from request body.
+         -> (Request -> Response) -- success response.
+         -> Application
+upstream msm sid parse successResponse req =
+    M.lookup sid <$> liftIO (readMVar msm) >>=
+    maybe (return $ notFound $ hsCookie req)
+          (\sess ->
+              ifM (liftIO $ readIORef $ closed sess)
+                  (return $ sockjsOk req $ SockjsClose 3000 "Go away!")
+                  ( do
+                      msg <- parse . L.fromChunks <$> EL.consume
+                      if L.null msg
+                        then return $ serverError "Payload expected."
+                        else -- validate json format.
+                            case L.parse json msg of
+                              L.Done _ (Array _) -> do
+                                  liftIO $ passRequest (inChan sess) msg
+                                  return $ successResponse req
+                              _ -> return $ serverError "Broken JSON encoding."
+                  )
+          )
 
 -- }}}
 
 -- session utils {{{
 
 type SessionId = Text
-data SessionStatus = StStreaming
-                   | StClosing
-                   | StClosed
-    deriving (Eq, Show)
+
 data Session = Session
   { sessionId :: SessionId
-  , inChan :: StreamChan ByteString
-  , outChan :: StreamChan ByteString
-  , closed :: IORef Bool
-  , inited :: MVar Bool
-  , mainThread :: ThreadId
-  , timer :: IORef (Maybe TimerId)
+  , inChan :: StreamChan ByteString -- | channel for receiving data.
+  , outChan :: StreamChan ByteString -- | channel for sending data.
+  , closed :: IORef Bool -- | closed or not.
+  , inited :: MVar Bool -- | inited or not, also as a lock to prevent multiple receiving connections for a session.
+  , mainThread :: ThreadId -- | thread running websocket application.
+  , timer :: IORef (Maybe TimerId) -- | a timer to close session.
   }
 
 type SessionMap = Map SessionId Session
+
 type WSApp p = WS.Request -> WebSockets p ()
 
 newSockjsState :: IO (MVar SessionMap)
@@ -368,7 +384,7 @@ tryModifyMVar m ac f =
                 putMVar m a'
                 return b
 
--- | create session if not exists, Left -> old session, Right -> new session.
+-- | create session if not exists.
 getOrNewSession :: MVar SessionMap
                 -> SessionId
                 -> WSApp EmulateProtocol
@@ -433,14 +449,14 @@ cancelTimer sess = do
 
 -- transport utils {{{
 
-passRequest :: Session -> L.ByteString -> IO ()
-passRequest sess s = atomically
-                . writeTChan (inChan sess)
-                . Chunks
-                . (:[])
-                . B.toByteString
-                . encodeFrame EmulateProtocol Nothing
-                . Frame True BinaryFrame $ s
+passRequest :: StreamChan ByteString -> L.ByteString -> IO ()
+passRequest ch =
+    atomically
+  . writeTChan ch
+  . return
+  . B.toByteString
+  . encodeFrame EmulateProtocol Nothing
+  . Frame True BinaryFrame
 
 parseFramePayload :: L.ByteString -> L.ByteString
 parseFramePayload = fromMaybe (error "Internal Encoding Error [downstream]") .
@@ -457,12 +473,6 @@ limit n (Continue k) = continue loop where
             else k (Chunks xs) >>== (`E.yield` Chunks [])
     loop EOF = k EOF >>== (`E.yield` EOF)
 limit _ step = return step
-
-streamMessages :: StreamChan ByteString -> Int64 -> (L.ByteString -> L.ByteString) -> Enumerator Builder IO b
-streamMessages ch n wrap = enumChan ch
-                        $= EL.map (wrap . parseFramePayload . toLazy)
-                        $= limit n
-                        $= EL.concatMap ((:[B.flush]) . B.fromLazyByteString)
 
 -- }}}
 

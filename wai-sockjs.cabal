@@ -54,7 +54,7 @@ executable sockjs-example
                , wai-websockets >= 0.5 && < 0.6
                , wai-app-static
                , file-embed
-               , enumerator
+               , enumerator >= 0.4.15
                , attoparsec
                , attoparsec-enumerator
                , aeson
