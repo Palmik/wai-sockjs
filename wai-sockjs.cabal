@@ -11,10 +11,11 @@ build-type:          Simple
 cabal-version:       >=1.8
 library
   exposed-modules: Network.Sockjs
-                 , Network.Sockjs.Types
-                 , Network.Sockjs.Timer
                  , Network.Wai.Application.Sockjs
-  other-modules:     
+  other-modules:   Control.Concurrent.Timer
+                 , Control.Monad.Utils
+                 , Data.Enumerator.Utils
+                 , Data.ByteString.Utils
   ghc-options:       -Wall
   build-depends: base >= 4.0 && < 5.0
                , transformers
@@ -26,6 +27,7 @@ library
                , http-types
                , wai
                , websockets >= 0.4 && < 0.5
+               , websockets-lite >= 0.1
                , wai-app-static
                , file-embed
                , enumerator
@@ -37,7 +39,7 @@ library
                , pureMD5
                , binary
 
-executable sockjs-example
+executable wai-sockjs-example
   ghc-options: -Wall -O3 -threaded -static
   main-is: Main.hs
   build-depends: base >= 4.0 && < 5.0
@@ -51,6 +53,7 @@ executable sockjs-example
                , wai
                , warp >= 0.4.6 && < 0.5
                , websockets >= 0.4 && < 0.5
+               , websockets-lite >= 0.1
                , wai-websockets >= 0.5 && < 0.6
                , wai-app-static
                , file-embed
