@@ -199,9 +199,6 @@ notFound hs = ResponseBuilder statusNotFound hs mempty
 notModified :: Response
 notModified = ResponseBuilder statusNotModified [] mempty
 
-notAllowed :: Request -> Response
-notAllowed req = ResponseBuilder statusNotAllowed (hsCommon req) mempty
-
 noContent :: Request -> Response
 noContent req = ResponseBuilder statusNoContent (hsPlain ++ hsCommon req) mempty
 

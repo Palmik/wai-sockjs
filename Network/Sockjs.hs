@@ -18,8 +18,6 @@ import qualified Blaze.ByteString.Builder as B
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as L
-import Data.Enumerator (Enumeratee)
-import qualified Data.Enumerator.List as EL
 import Data.Aeson
 import Data.Aeson.Encode (fromValue)
 import Data.Aeson.Parser (value)
