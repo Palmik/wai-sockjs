@@ -1,89 +1,85 @@
-{-# LANGUAGE OverloadedStrings, PatternGuards #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 module Apps where
 
-import Data.Char
-import Data.Monoid
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as S
-import Data.Map (Map)
+import           Control.Exception (fromException)
+import           Control.Monad (forever, when, forM_)
+import           Control.Monad.IO.Class (liftIO)
+import           Control.Applicative
+import           Control.Concurrent.MVar
+
+import           Data.Map (Map)
 import qualified Data.Map as M
+import           Data.Monoid (mappend, mconcat)
+import           Data.Attoparsec
+import           Data.Attoparsec.Char8 (skipSpace)
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as S
 
-import Control.Exception
-import Control.Monad
-import Control.Monad.IO.Class
-import Control.Concurrent
+import           Network.WebSockets.Lite
 
-import Network.WebSockets
+echo :: WSLite ()
+echo = forever $ recvBS >>= send
 
-import Network.Sockjs.Types
-import Network.Sockjs
+close' :: WSLite ()
+close' = return ()
 
-echo :: TextProtocol p => Request -> WebSockets p ()
-echo req = do
-    acceptRequest req
-    _ <- startHBThread
-    sendSockjs SockjsOpen
-    forever $ do
-        msg <- receiveSockjs
-        sendSockjsData msg
+data ChatMessage = ChatJoin ByteString
+                 | ChatData ByteString
+                 | ChatError ByteString
 
-close :: TextProtocol p => Request -> WebSockets p ()
-close req = do
-    acceptRequest req
-    sendSockjs SockjsOpen
+chatParser :: Parser ChatMessage
+chatParser = ChatJoin <$> (string "join" *> skipSpace *> takeByteString)
+         <|> ChatData <$> takeByteString
 
-type ServerState p = Map ByteString (Sink p) 
+instance UpProtocol ChatMessage where
+    decode s = parseOnly chatParser s
 
-clientExists :: Protocol p => ByteString -> ServerState p -> Bool
-clientExists name = maybe False (const True) . M.lookup name
+instance DownProtocol ChatMessage where
+    encode (ChatData s) = s
+    encode (ChatError e) = "error: " `mappend` e
+    encode (ChatJoin name) = name `mappend` " joined"
 
-chat :: TextProtocol p => MVar (ServerState p) -> Request -> WebSockets p ()
-chat state req = do
-    acceptRequest req
-    sendSockjs SockjsOpen
+type ChatState = MVar (Map ByteString Sink)
+
+newChatState :: IO ChatState
+newChatState = newMVar M.empty
+
+chat :: ChatState -> WSLite ()
+chat clients = do
+    name <- recvJoin
     sink <- getSink
-    msg <- receiveSockjs
-    clients <- liftIO $ readMVar state
-    case msg of
-        _   | not (prefix `S.isPrefixOf` msg) ->
-                sendSockjsData "Wrong Annoucement!"
-            | any ($ name)
-                [S.null, S.any isPunctuation, S.any isSpace] ->
-                    sendSockjsData $
-                        "Name cannot " `mappend`
-                        "contain punctuation or whitespace, and " `mappend`
-                        "cannot be empty"
-            | clientExists name clients ->
-                sendSockjsData "User already exists"
-            | otherwise -> do
-                liftIO $ modifyMVar_ state $ \s -> do
-                    let s' = M.insert name sink s
-                    sendSink sink $ sockjsData $
-                        "Welcome! Users: " `mappend`
-                        S.intercalate ", " (M.keys s)
-                    broadcast (name `mappend` " joined") s'
-                    return s'
-                _ <- startHBThread
-                talk state name
-          where
-            prefix = "Hi! I am "
-            name = S.drop (S.length prefix) msg
+    exists <- liftIO $ modifyMVar clients $ \cs -> do
+        case M.lookup name cs of
+            Nothing -> return (M.insert name sink cs, False)
+            Just _  -> return (cs, True)
+    when exists $ fail' "User already exists."
 
-broadcast :: TextProtocol p => ByteString -> ServerState p -> IO ()
-broadcast message clients =
-    mapM_ (flip sendSink (sockjsData message)) $ M.elems clients
-
-talk :: TextProtocol p => MVar (ServerState p) -> ByteString -> WebSockets p ()
-talk state user = flip catchWsError catchDisconnect $ do
-    msg <- receiveSockjs
-    liftIO $ readMVar state >>= broadcast
-        (user `mappend` ": " `mappend` msg)
-    talk state user
+    flip catchError (handleDisconnect name) $ do
+        welcome name
+        broadcast $ ChatJoin name
+        forever $ do
+            msg <- recv
+            case msg of
+                ChatData s -> broadcast $ ChatData $ mconcat [name, ": ", s]
+                _ -> fail' "invalid message."
   where
-    catchDisconnect e = case fromException e of
-        Just ConnectionClosed -> liftIO $ modifyMVar_ state $ \s -> do
-            let s' = M.delete user s
-            broadcast (user `mappend` " disconnected") s'
-            return s'
+    fail' s = send (ChatError s) >> close
+    recvJoin = do msg <- recv
+                  case msg of
+                      ChatJoin name -> return name
+                      _ -> fail' "invalid message."
+
+    broadcast msg = do
+        sinks <- M.elems <$> liftIO (readMVar clients)
+        forM_ sinks (flip sendSink msg)
+
+    welcome name = do
+        users <- filter (/=name) . M.keys <$> liftIO (readMVar clients)
+        send $ ChatData $ "Welcome! Users: " `mappend` S.intercalate ", " users
+
+    handleDisconnect name e = case fromException e of
+        Just ConnectionClosed -> do
+            liftIO $ modifyMVar_ clients $ return . M.delete name
+            broadcast $ ChatData $ mconcat [name, " disconnected."]
         _ -> return ()
 

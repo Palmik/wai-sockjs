@@ -1,55 +1,83 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExistentialQuantification, OverloadedStrings, DeriveDataTypeable #-}
 module Network.Sockjs
-  ( sendSockjs
-  , sendSockjsData
-  , sockjsData
-  , sendSinkSockjs
-  , receiveSockjs
-  , startHBThread
+  ( SockjsMessage (..)
+  , renderSockjs
+  , SockjsException (..)
+  , SockjsRequest (..)
+  , decodeSockjs
+  , decodeValue
   ) where
 
-import Control.Applicative
-import Control.Monad
-import Control.Monad.IO.Class
-import Control.Concurrent
+import Debug.Trace
+import Data.Maybe
+import Prelude hiding ( (++) )
+import Data.Typeable
 import Data.Monoid
-import Data.ByteString (ByteString)
+import Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as B
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as L
+import Data.Enumerator (Enumeratee)
+import qualified Data.Enumerator.List as EL
 import Data.Aeson
-import Network.WebSockets
-import Network.Sockjs.Types
+import Data.Aeson.Encode (fromValue)
+import Data.Aeson.Parser (value)
+import Data.Attoparsec
+import Control.Exception
+import Control.Applicative
 
-heartBeatInterval :: Int
-heartBeatInterval = 25
+(++) :: Monoid a => a -> a -> a
+(++) = mappend
 
-sendSockjs :: TextProtocol p => SockjsMessage -> WebSockets p ()
-sendSockjs = sendTextData . B.toLazyByteString . renderSockjs
+data SockjsRequest a = SockjsRequest { unSockjsRequest :: [a] }
+    deriving (Show) -- for debug
 
-sendSockjsData :: TextProtocol p => ByteString -> WebSockets p ()
-sendSockjsData = sendSockjs . SockjsData . (:[])
+instance FromJSON a => FromJSON (SockjsRequest a) where
+    parseJSON js@(Array _) = SockjsRequest <$> parseJSON js
+    parseJSON js = SockjsRequest . (:[]) <$> parseJSON js
 
-sockjsData :: (TextProtocol p, WebSocketsData a) => a -> Message p
-sockjsData = textData . B.toLazyByteString . renderSockjs . SockjsData . (:[]) . mconcat . L.toChunks . toLazyByteString
+data SockjsMessage = SockjsOpen
+                   | SockjsHeartbeat
+                   | SockjsData [ByteString]
+                   | SockjsClose Int ByteString
+    deriving (Show)
 
-sendSinkSockjs :: TextProtocol p => Sink p -> SockjsMessage -> IO ()
-sendSinkSockjs sink = sendSink sink . textData . B.toLazyByteString . renderSockjs
+renderSockjs :: SockjsMessage -> Builder
+renderSockjs msg = case msg of
+    SockjsOpen -> B.fromByteString "o"
+    SockjsHeartbeat -> B.fromByteString "h"
+    (SockjsData xs) -> mconcat $
+                    [ B.fromByteString "a"
+                    , (fromValue . toJSON $ xs)
+                    ]
+    (SockjsClose code reason) -> B.fromLazyByteString . L.fromChunks $ 
+                    [ "c["
+                    , S.pack (show code)
+                    , ",\""
+                    , reason
+                    , "\"]"
+                    ]
 
-receiveSockjs :: (TextProtocol p, FromJSON a, Monoid a) => WebSockets p a
-receiveSockjs = mconcat <$> receiveSockjs'
+decodeValue :: (FromJSON a) => ByteString -> Maybe a
+decodeValue s = case parse value s of
+             Done _ v -> case fromJSON v of
+                             Success a -> Just a
+                             _         -> Nothing
+             _          -> Nothing
 
-receiveSockjs' :: (TextProtocol p, FromJSON a) => WebSockets p [a]
-receiveSockjs' = do
-    msg <- receiveData
-    case msg of
-        "" -> receiveSockjs'
-        _ -> maybe (throwWsError (SockjsError "Broken JSON encoding [receive]."))
-                   return
-                   (unSockjsRequest <$> decodeValue msg)
+decodeSockjs :: ByteString -> Maybe SockjsMessage
+decodeSockjs s = case S.uncons s of
+    Just ('o', _) -> Just SockjsOpen 
+    Just ('h', _) -> Just SockjsHeartbeat 
+    Just ('a', s') -> SockjsData <$> decodeValue s'
+    Just ('c', s') -> do (code, reason) <- decodeValue s'
+                         return $ SockjsClose code reason
+    _ -> trace ("unknown message:"++show s) Nothing
 
-startHBThread :: TextProtocol p => WebSockets p ThreadId
-startHBThread = do
-    sink <- getSink
-    liftIO . forkIO . forever $ do
-        threadDelay (heartBeatInterval*1000*1000)
-        sendSinkSockjs sink SockjsHeartbeat
+data SockjsException = SockjsReadEOF
+                     | SockjsError String
+    deriving (Show, Typeable)
+
+instance Exception SockjsException
+

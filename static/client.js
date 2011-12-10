@@ -49,7 +49,7 @@ $(document).ready(function () {
 
         ws.onopen = function() {
             log('open');
-            ws.send('Hi! I am ' + user);
+            ws.send('join ' + user);
         };
         ws.onclose = function() {
             log('closed');
