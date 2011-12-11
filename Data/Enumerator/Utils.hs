@@ -39,16 +39,16 @@ limit _ step = return step
 
 -- | fetch multiple (at least one) items from TChan at a time, if TChan is empty, block on it.
 readTChan' :: TChan a -> STM [a]
-readTChan' ch = (:) <$> readTChan ch <*> readRest ch
+readTChan' chan = (:) <$> readTChan chan <*> readRest chan
   where
     readRest ch = do
-        empty <- isEmptyTChan ch
-        if empty
+        b <- isEmptyTChan ch
+        if b
           then return []
           else (:) <$> readTChan ch <*> readRest ch
 
 -- | fetch multiple (at least one) chunks from TChan at a time, and combine them into one.
-enumStreamChanContents :: StreamChan a -> Enumerator [a] IO b
+enumStreamChanContents :: Show a => StreamChan a -> Enumerator [a] IO b
 enumStreamChanContents ch = checkContinue0 $ \loop f -> do
     streams <- liftIO $ atomically $ readTChan' ch
     let chunks = takeWhile isChunk streams
