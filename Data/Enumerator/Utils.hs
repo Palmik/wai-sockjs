@@ -48,7 +48,7 @@ readTChan' chan = (:) <$> readTChan chan <*> readRest chan
           else (:) <$> readTChan ch <*> readRest ch
 
 -- | fetch multiple (at least one) chunks from TChan at a time, and combine them into one.
-enumStreamChanContents :: Show a => StreamChan a -> Enumerator [a] IO b
+enumStreamChanContents :: StreamChan a -> Enumerator [a] IO b
 enumStreamChanContents ch = checkContinue0 $ \loop f -> do
     streams <- liftIO $ atomically $ readTChan' ch
     let chunks = takeWhile isChunk streams
@@ -67,10 +67,10 @@ concatMapMaybe f = checkDone (continue . step) where
     step k (Chunks xs) = loop k xs
     
     loop k [] = continue (step k)
-    loop k (x:xs) = do
+    loop k (x:xs) =
         case f x of
             Nothing -> k EOF >>==
-                (`yield` (Chunks xs))
+                (`yield` Chunks xs)
             Just fx -> k (Chunks fx) >>==
                 checkDoneEx (Chunks xs) (`loop` xs)
 

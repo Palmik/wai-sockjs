@@ -43,19 +43,19 @@ data SockjsMessage = SockjsOpen
 
 renderSockjs :: SockjsMessage -> Builder
 renderSockjs msg = case msg of
-    SockjsOpen -> B.fromByteString "o"
+    SockjsOpen      -> B.fromByteString "o"
     SockjsHeartbeat -> B.fromByteString "h"
-    (SockjsData xs) -> mconcat $
-                    [ B.fromByteString "a"
-                    , (fromValue . toJSON $ xs)
-                    ]
+    (SockjsData xs) -> mconcat
+                         [ B.fromByteString "a"
+                         , fromValue . toJSON $ xs
+                         ]
     (SockjsClose code reason) -> B.fromLazyByteString . L.fromChunks $ 
-                    [ "c["
-                    , S.pack (show code)
-                    , ",\""
-                    , reason
-                    , "\"]"
-                    ]
+                         [ "c["
+                         , S.pack (show code)
+                         , ",\""
+                         , reason
+                         , "\"]"
+                         ]
 
 decodeValue :: (FromJSON a) => ByteString -> Maybe a
 decodeValue s = case parse value s of

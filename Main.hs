@@ -15,8 +15,8 @@ import Apps (echo, chat, close', newChatState, ChatState, chat)
 
 staticApp :: Application
 staticApp = Static.staticApp Static.defaultFileServerSettings
-              -- { Static.ssFolder = Static.embeddedLookup $ Static.toEmbedded $(embedDir "static") }
-              { Static.ssFolder = Static.fileSystemLookup "static" }
+              { Static.ssFolder = Static.embeddedLookup $ Static.toEmbedded $(embedDir "static") }
+              -- { Static.ssFolder = Static.fileSystemLookup "static" }
 
 mkApps :: ChatState -> WSLiteRoute
 mkApps st = [ ( ["echo"],                    (echo,    Nothing) )

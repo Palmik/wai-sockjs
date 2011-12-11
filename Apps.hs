@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Apps where
 
 import           Control.Exception (fromException)
@@ -32,7 +32,7 @@ chatParser = ChatJoin <$> (string "join" *> skipSpace *> takeByteString)
          <|> ChatData <$> takeByteString
 
 instance UpProtocol ChatMessage where
-    decode s = parseOnly chatParser s
+    decode = parseOnly chatParser
 
 instance DownProtocol ChatMessage where
     encode (ChatData s) = s
@@ -48,7 +48,7 @@ chat :: ChatState -> WSLite ()
 chat clients = do
     name <- recvJoin
     sink <- getSink
-    exists <- liftIO $ modifyMVar clients $ \cs -> do
+    exists <- liftIO $ modifyMVar clients $ \cs ->
         case M.lookup name cs of
             Nothing -> return (M.insert name sink cs, False)
             Just _  -> return (cs, True)
@@ -71,7 +71,7 @@ chat clients = do
 
     broadcast msg = do
         sinks <- M.elems <$> liftIO (readMVar clients)
-        forM_ sinks (flip sendSink msg)
+        forM_ sinks (`sendSink` msg)
 
     welcome name = do
         users <- filter (/=name) . M.keys <$> liftIO (readMVar clients)
