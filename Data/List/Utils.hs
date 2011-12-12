@@ -5,4 +5,4 @@ groupWith f (x1:x2:xs) =
     case f x1 x2 of
         Just x  -> groupWith f (x:xs)
         Nothing -> x1 : groupWith f (x2:xs)
-groupWith f xs = xs
+groupWith _ xs = xs
