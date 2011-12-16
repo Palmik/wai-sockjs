@@ -283,7 +283,7 @@ downstream state sid app rsplimit prelude headers wrap req = return $ ResponseEn
                                else enumMsg SockjsOpen
                       body = prelude
                              >==> open
-                             >==> messages (outChan sess)
+                             >==> messages (out sess)
                              >==> enumMsg (SockjsClose 3000 "Go away!")
                       iter = body
                            $= E.limit rsplimit
@@ -300,21 +300,18 @@ downstream state sid app rsplimit prelude headers wrap req = return $ ResponseEn
     enumMsg = E.enumChunks . (:[]) . B.toByteString . wrap . renderSockjs
     header f = f statusOK (headers ++ hsCommon req ++ hsNoCache)
 
-    -- combine multiple SockjsData into one
-    aggregate :: [SockjsMessage] -> [SockjsMessage]
-    aggregate msgs = groupWith combine msgs
-      where combine (SockjsData xs1) (SockjsData xs2) = Just (SockjsData (xs1++xs2))
-            combine _ _ = Nothing
-
-    -- don't send heart beat for xhr polling.
-    ignoreHeartbeat = if rsplimit==1 then filter (not . isHeartbeat) else id
-      where isHeartbeat SockjsHeartbeat = True
-            isHeartbeat _ = False
+    reverseSockjsData (SockjsData xs) = SockjsData (reverse xs)
+    reverseSockjsData x = x
 
     -- sending message stream.
-    messages :: StreamChan SockjsMessage -> Enumerator ByteString IO b
-    messages ch = E.enumStreamChanContents ch
-               $= EL.concatMap (map (B.toByteString . wrap . renderSockjs) . aggregate . ignoreHeartbeat)
+    messages :: TVar (Stream SockjsMessage) -> Enumerator ByteString IO b
+    messages ch = E.enumTVar ch
+               $= EL.concatMap reverse
+               $= EL.map ( B.toByteString
+                         . wrap
+                         . renderSockjs
+                         . reverseSockjsData
+                         )
 
 -- | send message applicatin.
 upstream :: MVar SessionMap
@@ -348,8 +345,8 @@ type SessionId = Text
 
 data Session = Session
   { sessionId :: SessionId
-  , inChan :: StreamChan ByteString -- | channel for receiving data.
-  , outChan :: StreamChan SockjsMessage -- | channel for sending data.
+  , inChan :: E.StreamChan ByteString -- | channel for receiving data.
+  , out :: TVar (Stream SockjsMessage) -- | TVar for sending data.
   , closed :: IORef Bool -- | closed or not.
   , inited :: MVar Bool -- | inited or not, also as a lock to prevent multiple receiving connections for a session.
   , mainThread :: ThreadId -- | thread running websocket application.
@@ -383,14 +380,23 @@ getOrNewSession state sid app = modifyMVar state $ \sm ->
         Nothing -> do
             putStrLn $ "new session "++show sid
             in_ <- newTChanIO
-            out <- newTChanIO
+            out' <- newTVarIO $ Chunks []
             inited' <- newMVar False
             closed' <- newIORef False
             timer' <- newIORef Nothing
+
+            let sink x = atomically $ do
+                    s <- readTVar out'
+                    case s of
+                        Chunks (SockjsData xs : rest) ->
+                            writeTVar out' $ Chunks $ SockjsData (x:xs) : rest
+                        Chunks rest ->
+                            writeTVar out' $ Chunks $ SockjsData [x] : rest
+                        EOF -> return ()
+
             thread <- forkIO $ do
-                _ <- startHBThread out
-                let sink bs = atomically (writeTChan out (Chunks [SockjsData [bs]]))
-                runWSLite (enumStreamChan in_) sink app
+                _ <- startHBThread out'
+                runWSLite (E.enumStreamChan in_) sink app
                 M.lookup sid <$> readMVar state >>=
                   maybe (return $ error "impossible:session disappeared before close!")
                         (closeSession state)
@@ -398,7 +404,7 @@ getOrNewSession state sid app = modifyMVar state $ \sm ->
             let sess = Session
                         { sessionId = sid
                         , inChan = in_
-                        , outChan = out
+                        , out = out'
                         , closed = closed'
                         , inited = inited'
                         , timer = timer'
@@ -411,7 +417,7 @@ closeSession :: MVar SessionMap -> Session -> IO ()
 closeSession state sess = do
     putStrLn $ "close session "++show (sessionId sess)
     writeIORef (closed sess) True
-    atomically $ writeTChan (outChan sess) EOF
+    atomically $ writeTVar (out sess) EOF
     threadDelay (5*1000*1000)
     modifyMVar_ state $ return . M.delete (sessionId sess)
 
@@ -437,10 +443,14 @@ cancelTimer sess = do
 
 -- }}}
 
-startHBThread :: StreamChan SockjsMessage -> IO ThreadId
+startHBThread :: TVar (Stream SockjsMessage) -> IO ThreadId
 startHBThread ch = forkIO . forever $ do
     threadDelay (heartBeatInterval*1000*1000)
-    atomically $ writeTChan ch $ Chunks [SockjsHeartbeat]
+    atomically $ do
+        s <- readTVar ch
+        case s of
+            Chunks [] -> writeTVar ch $ Chunks $ [SockjsHeartbeat]
+            _         -> return ()
 
 sockjsWrapper :: Monad m => Enumeratee ByteString ByteString m a
 sockjsWrapper = E.concatMapMaybe f

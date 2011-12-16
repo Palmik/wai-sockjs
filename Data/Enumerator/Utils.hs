@@ -47,18 +47,6 @@ readTChan' chan = (:) <$> readTChan chan <*> readRest chan
           then return []
           else (:) <$> readTChan ch <*> readRest ch
 
--- | fetch multiple (at least one) chunks from TChan at a time, and combine them into one.
-enumStreamChanContents :: StreamChan a -> Enumerator [a] IO b
-enumStreamChanContents ch = checkContinue0 $ \loop f -> do
-    streams <- liftIO $ atomically $ readTChan' ch
-    let chunks = takeWhile isChunk streams
-        datas = concat [xs | (Chunks xs) <- chunks]
-    if null chunks
-      then f EOF >>== returnI
-      else f (Chunks [datas]) >>== loop
-  where isChunk (Chunks _) = True
-        isChunk _          = False
-
 -- | like `Enumerator.List.concatMap' , but terminate when return Nothing
 concatMapMaybe :: Monad m => (ao -> Maybe [ai])
            -> Enumeratee ao ai m b
@@ -76,3 +64,33 @@ concatMapMaybe f = checkDone (continue . step) where
 
 chunking :: Monad m => Enumeratee ByteString Builder m a
 chunking = EL.concatMap ((:[B.flush]) . B.fromByteString)
+
+type StreamChan a = TChan (Stream a)
+
+iterStreamChan :: StreamChan a -> Iteratee a IO ()
+iterStreamChan ch = continue go
+  where
+    go EOF = liftIO $ atomically $ writeTChan ch EOF
+    go stream = liftIO (atomically $ writeTChan ch stream) >> continue go
+
+enumStreamChan :: StreamChan a -> Enumerator a IO b
+enumStreamChan ch = checkContinue0 $ \loop f -> do
+    s <- liftIO $ atomically $ readTChan ch
+    case s of
+        EOF -> f EOF >>== returnI
+        _   -> f s   >>== loop
+
+enumTVar :: TVar (Stream a) -> Enumerator [a] IO b
+enumTVar ch = checkContinue0 $ \loop f -> do
+    s <- liftIO $ atomically $ do
+              s <- readTVar ch
+              case s of
+                  Chunks [] -> retry
+                  EOF       -> return EOF
+                  Chunks xs -> do
+                      writeTVar ch (Chunks [])
+                      return (Chunks [xs])
+    case s of
+        EOF -> f EOF >>== returnI
+        _   -> f s >>== loop
+
