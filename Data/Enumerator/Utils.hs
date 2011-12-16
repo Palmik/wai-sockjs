@@ -12,7 +12,6 @@ import Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as B
 
 import Control.Concurrent.STM
-import Network.WebSockets.Lite.Emulate
 
 -- | An `Enumerator' only do IO.
 ioEnum :: IO () -> Enumerator a IO b

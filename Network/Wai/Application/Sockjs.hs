@@ -15,7 +15,6 @@ import           Data.Monoid
 import           Data.List
 import           Data.Maybe
 import           Data.IORef
-import           Data.List.Utils (groupWith)
 import           Data.Int (Int64)
 
 import           Prelude hiding (catch)
