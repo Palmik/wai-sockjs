@@ -1,68 +1,43 @@
 name:                wai-sockjs
 version:             0.1.0.0
 synopsis:            sockjs server side, using warp and websockets
-homepage:            https://github.com/yihuang/wai-sockjs
 license:             BSD3
 license-file:        LICENSE
-author:              yihuang
-maintainer:          yi.codeplayer@gmail.com
+author:              Petr Pilař, Huang Yi
+maintainer:          maintainer+the.palmik@gmail.com
 category:            Web
 build-type:          Simple
 cabal-version:       >=1.8
+
+extra-source-files:
+    LICENSE
+  , README.md
+
 library
-  exposed-modules: Network.Sockjs
-                 , Network.Wai.Application.Sockjs
-  other-modules:   Control.Concurrent.Timer
-                 , Control.Monad.Utils
-                 , Data.Enumerator.Utils
-                 , Data.ByteString.Utils
-  ghc-options:       -Wall
-  build-depends: base >= 4.0 && < 5.0
-               , transformers
-               , bytestring
-               , text
-               , blaze-builder
-               , vector
-               , containers
-               , http-types
-               , wai
-               , websockets >= 0.4 && < 0.5
-               , websockets-lite >= 0.1
-               , wai-app-static
-               , file-embed
-               , enumerator
-               , attoparsec
-               , attoparsec-enumerator
-               , aeson
-               , stm
-               , cookie
-               , pureMD5
-               , binary
+  hs-source-dirs: src
+  exposed-modules:
+      Network.Sock
+    , Network.Wai.Application.Sock
 
-executable wai-sockjs-example
-  ghc-options: -Wall -O3 -threaded -static
-  main-is: Main.hs
-  build-depends: base >= 4.0 && < 5.0
-               , transformers
-               , bytestring
-               , text
-               , blaze-builder
-               , vector
-               , containers
-               , http-types
-               , wai
-               , warp >= 0.4.6 && < 0.5
-               , websockets >= 0.4 && < 0.5
-               , websockets-lite >= 0.1
-               , wai-websockets >= 0.5 && < 0.6
-               , wai-app-static
-               , file-embed
-               , enumerator >= 0.4.15
-               , attoparsec
-               , attoparsec-enumerator
-               , aeson
-               , stm
-               , cookie
-               , pureMD5
-               , binary
-
+  build-depends:
+      base >= 4.0 && < 5.0
+    , transformers
+    , bytestring
+    , text
+    , data-default           == 0.4.*
+    , blaze-builder
+    , vector
+    , containers
+    , http-types
+    , wai
+    , websockets             == 0.6.*
+    , wai-app-static
+    , file-embed
+    , enumerator
+    , attoparsec
+    , attoparsec-enumerator
+    , aeson
+    , stm
+    , cookie
+    , pureMD5
+    , binary
