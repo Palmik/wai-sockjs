@@ -3,7 +3,7 @@ version:             0.1.0.0
 synopsis:            sockjs server side, using warp and websockets
 license:             BSD3
 license-file:        LICENSE
-author:              Petr Pilař, Huang Yi
+author:              Petr Pilař
 maintainer:          maintainer+the.palmik@gmail.com
 category:            Web
 build-type:          Simple
@@ -16,16 +16,15 @@ extra-source-files:
 library
   hs-source-dirs: src
   exposed-modules:
-      Network.Sock
-    , Network.Wai.Application.Sock
-    , Network.Wai.Application.Sock.Conduit
+      Network.Wai.Sock
+    , Network.Wai.Sock.Handler
+    , Network.Wai.Sock.Application
 
   other-modules:
-      Network.Sock.Types
-    , Network.Wai.Application.Sock.Types
 
   build-depends:
       base >= 4.0 && < 5.0
+    , monad-control          == 0.3.*
     , transformers
     , conduit                == 0.4.*
     , bytestring
