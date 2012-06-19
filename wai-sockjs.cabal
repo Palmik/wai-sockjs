@@ -17,33 +17,42 @@ library
   hs-source-dirs: src
   exposed-modules:
       Network.Wai.Sock
-    , Network.Wai.Sock.Handler
-    , Network.Wai.Sock.Application
 
   other-modules:
+      Control.Concurrent.MVar.Extra
+    , Network.Wai.Sock.Handler
+    , Network.Wai.Sock.Message
+    , Network.Wai.Sock.Frame
+    , Network.Wai.Sock.Session
+    , Network.Wai.Sock.Transport
 
   build-depends:
-      base >= 4.0 && < 5.0
-    , monad-control          == 0.3.*
-    , transformers
-    , conduit                == 0.4.*
-    , bytestring
-    , text
-    , data-default           == 0.4.*
-    , random                 == 1.*
-    , blaze-builder
-    , vector
-    , containers
-    , http-types
-    , wai
-    , websockets             == 0.6.*
-    , wai-app-static
-    , file-embed
-    , enumerator
-    , attoparsec
+      attoparsec
     , attoparsec-enumerator
     , aeson
-    , stm
-    , cookie
-    , pureMD5
+    , base                   == 4.*
     , binary
+    , blaze-builder
+    , bytestring
+    , conduit                == 0.4.*
+    , containers
+    , cookie
+    , data-default           == 0.4.*
+    , enumerator
+    , file-embed
+    , http-types
+    , lifted-base            == 0.1.*
+    , monad-control          == 0.3.*
+    , pureMD5
+    , random                 == 1.*
+    , stm
+    , text
+    , tagged                 == 0.4.*
+    , transformers
+    , transformers-base      == 0.4.*
+    , unordered-containers   == 0.2.*
+    , vector
+    , wai
+    , wai-app-static
+    , warp                   == 1.2.*
+    , websockets             == 0.6.*
