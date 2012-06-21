@@ -9,7 +9,7 @@ module Network.Wai.Sock.Handler
 import           System.Random (randomRIO)
 ------------------------------------------------------------------------------
 import           Control.Applicative
-import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
 import qualified Data.Aeson           as AE (encode, object)
 import           Data.Aeson                 ((.=))

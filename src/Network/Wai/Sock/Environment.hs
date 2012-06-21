@@ -14,13 +14,12 @@ import           Control.Monad.Trans.Control
 import qualified Data.ByteString.Lazy as LB (ByteString)
 import qualified Data.Conduit         as C  (Source, Sink)
 import qualified Data.HashMap.Strict  as HM (HashMap, insert, lookup)
+import           Data.Proxy
 ------------------------------------------------------------------------------
+import           Network.Wai.Sock.Internal.Types (Environment(..), Transport(..))
 import           Network.Wai.Sock.Session
 ------------------------------------------------------------------------------
 
-newtype Environment = Environment
-    { envSessions :: MVar (HM.HashMap SessionID (MVar Session))
-    }
 
 addSession :: MonadBaseControl IO m
            => SessionID
@@ -45,15 +44,16 @@ modifySession f sid Environment{..} = withMVar envSessions go
                    
 
 -- | Retrieves session with the given ID, if there is no such session, it's created first.
-getSession :: MonadBaseControl IO m
+getSession :: (MonadBaseControl IO m, Transport tag)
            => SessionID
+           -> Proxy tag
            -> Environment
            -> m (MVar Session)
-getSession sid Environment{..} = modifyMVar envSessions go
+getSession sid tr Environment{..} = modifyMVar envSessions go
     where go smap = case HM.lookup sid smap of
                         Just ms -> return (smap, ms)
                         Nothing -> do
-                            ms <- newSession sid >>= newMVar
+                            ms <- newSession sid tr >>= newMVar
                             return (HM.insert sid ms smap, ms)
 
 

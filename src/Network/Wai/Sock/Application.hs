@@ -4,16 +4,6 @@ module Network.Wai.Sock.Application
 ) where
 
 ------------------------------------------------------------------------------
-import qualified Data.ByteString.Lazy as BL (ByteString)
-import qualified Data.Conduit         as C  (Source, Sink)    
-import qualified Data.Text            as TS (Text)
+import           Network.Wai.Sock.Internal.Types (Application(..), ApplicationSettings(..))
 ------------------------------------------------------------------------------
 
-data Application m = Application
-    { applicationDefinition :: C.Source m BL.ByteString -> C.Sink BL.ByteString m () -> m ()
-    , applicationSettings :: ApplicationSettings
-    }
-
-data ApplicationSettings = ApplicationSettings
-    { appSettingsPrefix :: [TS.Text]
-    }
