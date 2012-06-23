@@ -1,6 +1,6 @@
 name:                wai-sockjs
-version:             0.1.0.0
-synopsis:            sockjs server side, using warp and websockets
+version:             0.2
+synopsis:            SockJS server side, using warp and websockets
 license:             BSD3
 license-file:        LICENSE
 author:              Petr Pilař
@@ -19,7 +19,9 @@ library
       Network.Wai.Sock
 
   other-modules:
-      Network.Wai.Sock.Application
+      Control.Concurrent.MVar.Extra
+    , Network.Wai.Extra
+    , Network.Wai.Sock.Application
     , Network.Wai.Sock.Environment
     , Network.Wai.Sock.Frame
     , Network.Wai.Sock.Handler

@@ -41,7 +41,7 @@ data Application m = Application
     }
 
 data ApplicationSettings = ApplicationSettings
-    { applicationSettingsPrefix :: [TS.Text]
+    { applicationPrefix :: [TS.Text]
     }
 
 ------------------------------------------------------------------------------
@@ -83,7 +83,7 @@ data Session where
         { sessionID :: SessionID
         , sessionTransportTag :: Proxy tag
         , sessionStatus :: SessionStatus
-        , sessionIncomingBuffer :: Chan BS.ByteString
+        , sessionIncomingBuffer :: Chan BL.ByteString -- ^ This buffer is filled by calls to handleIncoming and later, we transform it into Source for the Application.
         } -> Session
 
 -- | SessionID

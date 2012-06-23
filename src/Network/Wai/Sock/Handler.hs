@@ -9,6 +9,7 @@ module Network.Wai.Sock.Handler
 import           System.Random (randomRIO)
 ------------------------------------------------------------------------------
 import           Control.Applicative
+import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
 import qualified Data.Aeson           as AE (encode, object)
@@ -20,6 +21,7 @@ import           Data.Digest.Pure.MD5       (md5)
 import           Data.Int                   (Int64)
 import           Data.Maybe
 import           Data.Monoid
+import           Data.Proxy
 import qualified Data.Text            as TS (Text, isPrefixOf, isSuffixOf)
 import qualified Data.Text.Encoding   as TS (encodeUtf8)
 ------------------------------------------------------------------------------
@@ -29,17 +31,63 @@ import qualified Blaze.ByteString.Builder.Char.Utf8  as B (fromString, fromLazyT
 ------------------------------------------------------------------------------
 import qualified Network.HTTP.Types as H
 import qualified Network.Wai        as W (Application, Request(..), Response(..), responseLBS)
+import           Network.Wai.Extra
 ------------------------------------------------------------------------------
 import           Network.Wai.Sock.Application
 import           Network.Wai.Sock.Environment
 import           Network.Wai.Sock.Frame
 import           Network.Wai.Sock.Server
 import           Network.Wai.Sock.Session
+import           Network.Wai.Sock.Transport
+import           Network.Wai.Sock.Transport.WebSocket
 ------------------------------------------------------------------------------
 
-sock :: Environment -> ([TS.Text] -> Maybe (Application m, [TS.Text], [TS.Text])) -> W.Application
-sock mvsm r req = undefined
+-- TODO: ServerSettings, Environment and ([TS.Text] -> Maybe (Application m)) should be part of Server monad.
 
+sock :: ServerSettings
+     -> Environment
+     -> ([TS.Text] -> Maybe (Application m))
+     -> W.Application
+sock set mvsm find req = undefined
+
+handleSubroutes :: ServerSettings
+                -> Environment
+                -> Application m
+                -> W.Application
+handleSubroutes set@ServerSettings{..} env app@Application{..} req =
+    case (W.requestMethod req, suffix) of
+        -- TODO: Add OPTIONS response.
+        ("GET", [])          -> return responseGreeting
+        ("GET", [""])        -> return responseGreeting
+        ("GET", ["info"])    -> responseInfo set <$> liftIO (randomRIO (0, 4294967295))
+        ("GET", [r])
+            | isIframe r       -> return $ responseIframe set req
+        (_, [_, sid, trans]) -> handleTransport trans set env app sid req
+        _                    -> return response404
+                                                           
+    where suffix     = drop (length $ applicationPrefix applicationSettings) $ W.pathInfo req
+          isIframe p = TS.isPrefixOf "iframe" p && TS.isSuffixOf ".html" p
+
+
+handleTransport :: TS.Text
+                -> ServerSettings
+                -> Environment
+                -> Application m
+                -> SessionID
+                -> W.Application
+handleTransport trans set env app sid req =
+    case trans of
+        "websocket"     -> handle (Proxy :: Proxy WebSocket)
+        "xhr"           -> return response404
+        "xhr_send"      -> return response404
+        "xhr_streaming" -> return response404
+        "eventsource"   -> return response404
+        "htmlfile"      -> return response404
+        "jsonp"         -> return response404
+        "jsonp_send"    -> return response404
+        _               -> return response404
+    where handle tag = handleIncoming tag env req >> return response404 -- ^ Run the application here.
+ 
 ------------------------------------------------------------------------------
 -- | Standard responses (greeting, info, iframe)
 
@@ -83,36 +131,6 @@ responseInfo ServerSettings{..} ent = response200 headerJSON . AE.encode $ AE.ob
     , "origins"       .= serverSettingsAllowedOrigins
     , "entropy"       .= ent
     ]
-
-------------------------------------------------------------------------------
--- | Response utility functions.
-
-response404 :: W.Response
-response404 = W.responseLBS H.status404 headerPlain mempty
-
-response200 :: H.ResponseHeaders -> BL.ByteString -> W.Response
-response200 = W.responseLBS H.status200
-
-response304 :: W.Response
-response304 = W.responseLBS H.status304 [] mempty
-
-------------------------------------------------------------------------------
--- | Header utility functions.
-
-headerPlain :: H.ResponseHeaders
-headerPlain = [("Content-Type", "text/plain; charset=UTF-8")]
-
-headerHTML :: H.ResponseHeaders
-headerHTML = [("Content-Type", "text/html; charset=UTF-8")]
-
-headerJSON :: H.ResponseHeaders
-headerJSON = [("Content-Type", "application/json; charset=UTF-8")]
-
-headerCache :: H.ResponseHeaders
-headerCache = [("Cache-Control", "public; max-age=31536000;"),("Expires", "31536000")]
-
-headerETag :: H.Ascii -> H.ResponseHeaders
-headerETag etag = [("ETag", etag)]
 
 ------------------------------------------------------------------------------
 -- | Other utility functions.
