@@ -20,6 +20,8 @@ library
 
   other-modules:
       Control.Concurrent.MVar.Extra
+    , Control.Concurrent.MVar.Extra.Lifted
+    , Control.Concurrent.STM.TMChan.Extra
     , Network.Wai.Extra
     , Network.Wai.Sock.Application
     , Network.Wai.Sock.Environment
@@ -49,6 +51,8 @@ library
     , pureMD5
     , random                 == 1.*
     , stm
+    , stm-chans              == 1.3.*
+    , stm-conduit            == 0.4.*
     , text
     , tagged                 == 0.4.*
     , transformers

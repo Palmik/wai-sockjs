@@ -25,11 +25,15 @@ import qualified Network.HTTP.Types as H
 import qualified Network.Wai        as W (Application, Request(..), Response(..), responseLBS)
 ------------------------------------------------------------------------------
 
-method :: Monad m => H.Method -> W.Request -> (W.Request -> m ()) -> m ()
-method m req f = when (m == W.requestMethod req) $ f req
+method :: Monad m => H.Method -> W.Request -> m a -> (W.Request -> m a) -> m a
+method m req ac f
+    | m == W.requestMethod req = f req
+    | otherwise                = ac
 
-methods :: Monad m => [H.Method] -> W.Request -> (W.Request -> m ()) -> m ()
-methods ms req f = when (W.requestMethod req `elem` ms) $ f req
+methods :: Monad m => [H.Method] -> W.Request -> m a -> (W.Request -> m a) -> m a
+methods ms req ac f
+    | W.requestMethod req `elem` ms = f req
+    | otherwise                     = ac
 
 ------------------------------------------------------------------------------
 -- | Response utility functions.

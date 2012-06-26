@@ -3,11 +3,11 @@ module Network.Wai.Sock.Frame
 ) where
 
 ------------------------------------------------------------------------------
-import qualified Data.Text as TS (Text, unpack)
+import qualified Data.ByteString as BS (ByteString)
 ------------------------------------------------------------------------------
 
 data Frame
     = FrameOpen
     | FrameHeartbeat
-    | FrameMessage TS.Text
-    | FrameClose Int TS.Text
+    | FrameMessages [BS.ByteString]
+    | FrameClose Int BS.ByteString

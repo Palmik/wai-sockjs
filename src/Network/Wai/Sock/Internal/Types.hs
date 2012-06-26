@@ -16,7 +16,7 @@ module Network.Wai.Sock.Internal.Types
 
 ------------------------------------------------------------------------------
 import           Control.Concurrent.MVar.Lifted
-import           Control.Concurrent.Chan.Lifted
+import           Control.Concurrent.STM.TMChan
 import           Control.Monad.Base
 import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
@@ -27,7 +27,7 @@ import qualified Data.HashMap.Strict  as HM (HashMap)
 import           Data.Proxy
 import qualified Data.Text            as TS (Text)
 ------------------------------------------------------------------------------
-import qualified Network.Wai        as W (Request(..))
+import qualified Network.Wai        as W (Request(..), Response(..))
 ------------------------------------------------------------------------------
 import           Network.Wai.Sock.Frame
 ------------------------------------------------------------------------------
@@ -49,21 +49,32 @@ data ApplicationSettings = ApplicationSettings
 
 -- | Transport
 class Transport tag where
-    -- | Used for _ => Application communication.
-    -- The request is checked whether it conforms the transport's rules and is then saved to a buffer.
-    -- The '_' could stand for e.g. some web app communication with out server Application
     handleIncoming :: MonadBaseControl IO m
                    => Proxy tag
                    -> Environment
                    -> W.Request
-                   -> m ()
+                   -> m W.Response
 
-    -- | Used for Application => _ communication
-    -- The frame is checked whether it conforms the transport's rules and is then send (no buffering here).
+    -- | Formats the Frame (different protocols may format frames differently).
+    format :: Proxy tag
+           -> Frame
+           -> BL.ByteString
+
+    -- | Used for _ => 'Application' communication.
+    -- Awaits a message from the Session's buffer. In case of WebSocket, we call receive (WS is the only transport why this function is neccessary).
     -- The '_' could stand for e.g. some web app communication with out server Application
+    -- This function is used to create the Source for the 'Application'.
+    receive :: MonadBaseControl IO m
+            => Proxy tag
+            -> Session
+            -> m BL.ByteString
+
+    -- | Used for 'Application' => _ communication
+    -- The '_' could stand for e.g. some web app communication with out server Application
+    -- This function is used to create the Sink for the 'Application'.
     send :: MonadBaseControl IO m
          => Proxy tag
-         -> Frame
+         -> BL.ByteString
          -> m ()
 
 ------------------------------------------------------------------------------
@@ -83,7 +94,8 @@ data Session where
         { sessionID :: SessionID
         , sessionTransportTag :: Proxy tag
         , sessionStatus :: SessionStatus
-        , sessionIncomingBuffer :: Chan BL.ByteString -- ^ This buffer is filled by calls to handleIncoming and later, we transform it into Source for the Application.
+        , sessionIncomingBuffer :: TMChan BS.ByteString -- ^ This buffer is filled by calls to handleIncoming and later, we transform it into Source for the Application.
+        , sessionOutgoingBuffer :: TMChan BS.ByteString -- ^ This buffer is filled by calls to send.
         } -> Session
 
 -- | SessionID
@@ -91,6 +103,7 @@ type SessionID = TS.Text
 
 -- | SessionStatus
 data SessionStatus
-       = SessionFresh  -- ^ Right after creation, Session is "Fresh"
-       | SessionOpened -- ^ Right after we send opening frame, Session is "Opened". We also start the timeout & heartbeat timer at this point.
-       | SessionClosed -- ^ Right after we send closing frame, Session if "Closed".
+       = SessionFresh   -- ^ Right after creation, Session is "Fresh"
+       | SessionOpened  -- ^ Right after we send opening frame, Session is "Opened". We also start the timeout & heartbeat timer at this point.
+       | SessionWaiting 
+       | SessionClosed  -- ^ Right after we send closing frame, Session if "Closed".

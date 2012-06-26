@@ -40,6 +40,7 @@ import           Network.Wai.Sock.Server
 import           Network.Wai.Sock.Session
 import           Network.Wai.Sock.Transport
 import           Network.Wai.Sock.Transport.WebSocket
+import           Network.Wai.Sock.Transport.XHR
 ------------------------------------------------------------------------------
 
 -- TODO: ServerSettings, Environment and ([TS.Text] -> Maybe (Application m)) should be part of Server monad.
@@ -77,8 +78,8 @@ handleTransport :: TS.Text
                 -> W.Application
 handleTransport trans set env app sid req =
     case trans of
-        "websocket"     -> handle (Proxy :: Proxy WebSocket)
-        "xhr"           -> return response404
+        "websocket"     -> return response404
+        "xhr"           -> handle (Proxy :: Proxy XHRPolling)
         "xhr_send"      -> return response404
         "xhr_streaming" -> return response404
         "eventsource"   -> return response404

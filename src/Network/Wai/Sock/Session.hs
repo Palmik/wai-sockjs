@@ -11,7 +11,7 @@ module Network.Wai.Sock.Session
 
 ------------------------------------------------------------------------------
 import           Control.Applicative
-import           Control.Concurrent.Chan.Lifted
+import           Control.Concurrent.STM.TMChan
 import           Control.Monad.Base
 ------------------------------------------------------------------------------
 import qualified Data.ByteString.Lazy as BL (ByteString)
@@ -27,4 +27,4 @@ newSession :: (MonadBase IO m, Transport tag)
            => SessionID
            -> Proxy tag
            -> m Session
-newSession sid tr = Session sid tr SessionFresh <$> newChan
+newSession sid tr = Session sid tr SessionFresh <$> liftBase newTMChanIO <*> liftBase newTMChanIO
