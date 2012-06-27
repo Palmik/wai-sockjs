@@ -5,7 +5,6 @@ module Network.Wai.Sock.Environment
 ( Environment(..)
 , insertSession
 , lookupSession
-, adjustSession
 , getSession
 ) where
 
@@ -29,19 +28,19 @@ insertSession :: MonadBaseControl IO m
               => SessionID
               -> Session
               -> Environment
-              -> m (MVar Session)
+              -> m Session
 insertSession sid s Environment{..} = do
-    ms <- newMVar s
-    modifyMVar_ envSessions (return . HM.insert sid ms)
-    return ms
+    modifyMVar_ envSessions (return . HM.insert sid s)
+    return s
 
 lookupSession :: MonadBaseControl IO m
               => SessionID
               -> Environment
-              -> m (Maybe (MVar Session))
+              -> m (Maybe Session)
 lookupSession sid Environment{..} = withMVar envSessions (return . HM.lookup sid)
     
 
+{-
 -- | Applies the given function on session with given ID and saves the new value.
 -- If session with the supplied ID does not exist, it's virtually no-op.
 adjustSession :: MonadBaseControl IO m
@@ -53,6 +52,7 @@ adjustSession f sid Environment{..} = withMVar envSessions go
     where go smap = case HM.lookup sid smap of
                         Just ms -> modifyMVar_ ms f
                         Nothing -> return ()
+-}
                    
 
 -- | Retrieves session with the given ID, if there is no such session, it's created first.
@@ -60,7 +60,7 @@ getSession :: (MonadBaseControl IO m, Transport tag)
            => SessionID
            -> Proxy tag
            -> Environment
-           -> m (MVar Session)
+           -> m Session
 getSession sid tr env = do
     mms <- lookupSession sid env
     case mms of

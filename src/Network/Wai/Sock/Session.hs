@@ -11,6 +11,7 @@ module Network.Wai.Sock.Session
 
 ------------------------------------------------------------------------------
 import           Control.Applicative
+import           Control.Concurrent.MVar.Lifted
 import           Control.Concurrent.STM.TMChan
 import           Control.Monad.Base
 ------------------------------------------------------------------------------
@@ -27,4 +28,6 @@ newSession :: (MonadBase IO m, Transport tag)
            => SessionID
            -> Proxy tag
            -> m Session
-newSession sid tr = Session sid tr SessionFresh <$> liftBase newTMChanIO <*> liftBase newTMChanIO
+newSession sid tr = Session sid tr <$> newMVar SessionFresh
+                                   <*> liftBase newTMChanIO
+                                   <*> liftBase newTMChanIO

@@ -22,12 +22,13 @@ import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
 import qualified Data.ByteString.Lazy as BL (ByteString)
 import qualified Data.ByteString      as BS (ByteString)
-import qualified Data.Conduit         as C  (Source, Sink)
+import qualified Data.Conduit         as C  (Source, Sink, ResourceT)
 import qualified Data.HashMap.Strict  as HM (HashMap)
 import           Data.Proxy
 import qualified Data.Text            as TS (Text)
 ------------------------------------------------------------------------------
 import qualified Network.Wai        as W (Request(..), Response(..))
+import qualified Network.HTTP.Types as H (Status(..))
 ------------------------------------------------------------------------------
 import           Network.Wai.Sock.Frame
 ------------------------------------------------------------------------------
@@ -49,40 +50,44 @@ data ApplicationSettings = ApplicationSettings
 
 -- | Transport
 class Transport tag where
-    handleIncoming :: MonadBaseControl IO m
-                   => Proxy tag
+    handleIncoming :: Proxy tag
                    -> Environment
                    -> W.Request
-                   -> m W.Response
+                   -> C.ResourceT IO W.Response
 
     -- | Formats the Frame (different protocols may format frames differently).
     format :: Proxy tag
            -> Frame
            -> BL.ByteString
 
+    -- | Used to create a response (headers might be transport dependent).
+    respond :: Proxy tag
+            -> H.Status
+            -> BL.ByteString
+            -> W.Response
+
     -- | Used for _ => 'Application' communication.
     -- Awaits a message from the Session's buffer. In case of WebSocket, we call receive (WS is the only transport why this function is neccessary).
     -- The '_' could stand for e.g. some web app communication with out server Application
     -- This function is used to create the Source for the 'Application'.
-    receive :: MonadBaseControl IO m
-            => Proxy tag
+    receive :: Proxy tag
             -> Session
-            -> m BL.ByteString
+            -> C.ResourceT IO (Maybe BL.ByteString)
 
     -- | Used for 'Application' => _ communication
     -- The '_' could stand for e.g. some web app communication with out server Application
     -- This function is used to create the Sink for the 'Application'.
-    send :: MonadBaseControl IO m
-         => Proxy tag
+    send :: Proxy tag
+         -> Session
          -> BL.ByteString
-         -> m ()
+         -> C.ResourceT IO ()
 
 ------------------------------------------------------------------------------
 -- | Environment related types.
 
 -- | Environment
 newtype Environment = Environment
-    { envSessions :: MVar (HM.HashMap SessionID (MVar Session))
+    { envSessions :: MVar (HM.HashMap SessionID Session)
     }
 
 ------------------------------------------------------------------------------
@@ -93,9 +98,9 @@ data Session where
     Session :: Transport tag =>
         { sessionID :: SessionID
         , sessionTransportTag :: Proxy tag
-        , sessionStatus :: SessionStatus
-        , sessionIncomingBuffer :: TMChan BS.ByteString -- ^ This buffer is filled by calls to handleIncoming and later, we transform it into Source for the Application.
-        , sessionOutgoingBuffer :: TMChan BS.ByteString -- ^ This buffer is filled by calls to send.
+        , sessionStatus :: MVar SessionStatus           
+        , sessionIncomingBuffer :: TMChan BL.ByteString -- ^ This buffer is filled by calls to handleIncoming and later, we transform it into Source for the Application.
+        , sessionOutgoingBuffer :: TMChan BL.ByteString -- ^ This buffer is filled by calls to send.
         } -> Session
 
 -- | SessionID

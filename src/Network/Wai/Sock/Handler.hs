@@ -17,6 +17,7 @@ import           Data.Aeson                 ((.=))
 import qualified Data.Binary          as BI (encode)
 import qualified Data.ByteString.Lazy as BL (ByteString, toChunks, fromChunks)
 import qualified Data.ByteString      as BS (ByteString, empty, concat)
+import           Data.ByteString.Extra      (convertBL2BS, convertTS2BL)
 import           Data.Digest.Pure.MD5       (md5)
 import           Data.Int                   (Int64)
 import           Data.Maybe
@@ -132,15 +133,3 @@ responseInfo ServerSettings{..} ent = response200 headerJSON . AE.encode $ AE.ob
     , "origins"       .= serverSettingsAllowedOrigins
     , "entropy"       .= ent
     ]
-
-------------------------------------------------------------------------------
--- | Other utility functions.
-
-convertBS2BL :: BS.ByteString -> BL.ByteString
-convertBS2BL = BL.fromChunks . (:[])
-
-convertBL2BS :: BL.ByteString -> BS.ByteString
-convertBL2BS = BS.concat . BL.toChunks
-
-convertTS2BL :: TS.Text -> BL.ByteString
-convertTS2BL = convertBS2BL . TS.encodeUtf8
