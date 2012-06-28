@@ -31,3 +31,4 @@ newSession :: (MonadBase IO m, Transport tag)
 newSession sid tr = Session sid tr <$> newMVar SessionFresh
                                    <*> liftBase newTMChanIO
                                    <*> liftBase newTMChanIO
+                                   <*> newMVar Nothing

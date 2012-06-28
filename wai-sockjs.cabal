@@ -48,6 +48,7 @@ library
     , http-types
     , lifted-base            == 0.1.*
     , monad-control          == 0.3.*
+    , mtl                    == 2.1.*
     , pureMD5
     , random                 == 1.*
     , stm

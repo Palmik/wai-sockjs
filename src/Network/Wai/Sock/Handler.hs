@@ -1,16 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE FlexibleContexts  #-}
 
 module Network.Wai.Sock.Handler
-(
+( sock
 ) where
 
 ------------------------------------------------------------------------------
 import           System.Random (randomRIO)
 ------------------------------------------------------------------------------
 import           Control.Applicative
+import           Control.Concurrent.Lifted      (fork)
+import           Control.Concurrent.MVar.Lifted
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
+import           Control.Monad.Base
 ------------------------------------------------------------------------------
 import qualified Data.Aeson           as AE (encode, object)
 import           Data.Aeson                 ((.=))
@@ -18,6 +22,7 @@ import qualified Data.Binary          as BI (encode)
 import qualified Data.ByteString.Lazy as BL (ByteString, toChunks, fromChunks)
 import qualified Data.ByteString      as BS (ByteString, empty, concat)
 import           Data.ByteString.Extra      (convertBL2BS, convertTS2BL)
+import qualified Data.Conduit         as C
 import           Data.Digest.Pure.MD5       (md5)
 import           Data.Int                   (Int64)
 import           Data.Maybe
@@ -48,15 +53,17 @@ import           Network.Wai.Sock.Transport.XHR
 
 sock :: ServerSettings
      -> Environment
-     -> ([TS.Text] -> Maybe (Application m))
+     -> ([TS.Text] -> Maybe (Application (C.ResourceT IO)))
      -> W.Application
-sock set mvsm find req = undefined
+sock set env find req = do
+    maybe (return response404) run . find $ W.pathInfo req
+    where run app = handleSubroutes set env app req
 
 handleSubroutes :: ServerSettings
                 -> Environment
-                -> Application m
+                -> Application (C.ResourceT IO)
                 -> W.Application
-handleSubroutes set@ServerSettings{..} env app@Application{..} req =
+handleSubroutes set@ServerSettings{..} env app@Application{..} req = 
     case (W.requestMethod req, suffix) of
         -- TODO: Add OPTIONS response.
         ("GET", [])          -> return responseGreeting
@@ -74,21 +81,31 @@ handleSubroutes set@ServerSettings{..} env app@Application{..} req =
 handleTransport :: TS.Text
                 -> ServerSettings
                 -> Environment
-                -> Application m
+                -> Application (C.ResourceT IO)
                 -> SessionID
                 -> W.Application
 handleTransport trans set env app sid req =
     case trans of
         "websocket"     -> return response404
         "xhr"           -> handle (Proxy :: Proxy XHRPolling)
-        "xhr_send"      -> return response404
+        "xhr_send"      -> handle (Proxy :: Proxy XHRSend)
         "xhr_streaming" -> return response404
         "eventsource"   -> return response404
         "htmlfile"      -> return response404
         "jsonp"         -> return response404
         "jsonp_send"    -> return response404
         _               -> return response404
-    where handle tag = handleIncoming tag env req >> return response404 -- ^ Run the application here.
+    where handle tag = do
+              resp <- handleIncoming tag env req
+              -- TODO: The application should be started by one of the transport functions (when the session is first created).
+              ms <- lookupSession sid env
+              case ms of
+                   Just s -> modifyMVar_ (sessionApplicationThread s) $ \mt ->
+                                 case mt of
+                                      Nothing -> Just <$> fork (runApplication app s)
+                                      Just ti -> return (Just ti)
+                   _      -> return ()
+              return resp
  
 ------------------------------------------------------------------------------
 -- | Standard responses (greeting, info, iframe)

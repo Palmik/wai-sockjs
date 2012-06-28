@@ -4,7 +4,8 @@
 module Network.Wai.Sock.Transport
 ( Transport(..)
 , sendFrame
-, frameResponse
+, respondFrame
+, respondFrame200
 , handleByStatus
 ) where
     
@@ -16,7 +17,8 @@ import           Control.Monad.Trans.Control
 import           Data.Proxy
 import qualified Data.Conduit as C
 ------------------------------------------------------------------------------
-import qualified Network.Wai as W (Request(..), Response(..))
+import qualified Network.HTTP.Types as H (Status, status200, status204)
+import qualified Network.Wai        as W (Request(..), Response(..))
 ------------------------------------------------------------------------------
 import           Network.Wai.Sock.Internal.Types (Transport(..), Session(..), SessionStatus(..))
 import           Network.Wai.Sock.Frame
@@ -29,11 +31,20 @@ sendFrame :: Transport tag
           -> C.ResourceT IO ()
 sendFrame tag ses = send tag ses . format tag
 
-frameResponse :: Proxy tag
-              -> W.Request
-              -> Frame
-              -> W.Response
-frameResponse tag = undefined
+respondFrame :: Transport tag
+             => Proxy tag
+             -> H.Status
+             -> Frame
+             -> W.Request
+             -> W.Response
+respondFrame tag st fr = respond tag st (format tag fr)
+
+respondFrame200 :: Transport tag
+                => Proxy tag
+                -> Frame
+                -> W.Request
+                -> W.Response
+respondFrame200 tag fr = respond tag H.status200 (format tag fr)
 
 handleByStatus :: (MonadBaseControl IO m, Transport tag)
                => Proxy tag
@@ -41,10 +52,9 @@ handleByStatus :: (MonadBaseControl IO m, Transport tag)
                -> (Session -> m (SessionStatus, W.Response)) -- ^ SessionOpened handler
                -> (Session -> m (SessionStatus, W.Response)) -- ^ SessionClosed handler
                -> (Session -> m W.Response) -- ^ Handler for when the session is "Waiting", that is the session status MVar is empty.
-               -> W.Request
                -> Session
                -> m W.Response
-handleByStatus tag handleF handleO handleC handleW req ses = do
+handleByStatus tag handleF handleO handleC handleW ses = do
     mvar (handleW ses) -- The MVar is empty, which means there is another connection still open.
          (\s -> case s of
                      SessionFresh   -> handleF ses
