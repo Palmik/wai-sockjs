@@ -22,6 +22,7 @@ library
       Control.Concurrent.MVar.Extra
     , Control.Concurrent.MVar.Extra.Lifted
     , Control.Concurrent.STM.TMChan.Extra
+    , Data.ByteString.Extra
     , Network.Wai.Extra
     , Network.Wai.Sock.Application
     , Network.Wai.Sock.Environment
@@ -64,3 +65,5 @@ library
     , wai-app-static
     , warp                   == 1.2.*
     , websockets             == 0.6.*
+
+  ghc-options: -fwarn-unused-imports

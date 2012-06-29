@@ -15,22 +15,19 @@ module Network.Wai.Sock.Internal.Types
 
 , Transport(..)
 
+, Request(..)
+
 , Application(..)
 , ApplicationSettings(..)
 ) where
 
 ------------------------------------------------------------------------------
-import           Control.Applicative
 import           Control.Concurrent.Lifted      (ThreadId)
 import           Control.Concurrent.MVar.Lifted
 import           Control.Concurrent.STM.TMChan
-import           Control.Monad.Base
-import           Control.Monad.IO.Class
 import           Control.Monad.Trans.State.Lazy
-import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
 import qualified Data.ByteString.Lazy as BL (ByteString)
-import qualified Data.ByteString      as BS (ByteString)
 import qualified Data.Conduit         as C  (Source, Sink, ResourceT)
 import qualified Data.HashMap.Strict  as HM (HashMap)
 import           Data.Proxy
@@ -41,6 +38,15 @@ import qualified Network.HTTP.Types as H (Status(..))
 ------------------------------------------------------------------------------
 import           Network.Wai.Sock.Frame
 ------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+-- | Request wrapper related types.
+
+data Request = Request
+    { requestRaw :: W.Request
+    , requestSessionID :: SessionID
+    , requestApplication :: Application (C.ResourceT IO)
+    }
 
 ------------------------------------------------------------------------------
 -- | Application related types.
@@ -60,9 +66,8 @@ data ApplicationSettings = ApplicationSettings
 -- | Transport
 class Transport tag where
     handleIncoming :: Proxy tag
-                   -> Environment
-                   -> W.Request
-                   -> C.ResourceT IO W.Response
+                   -> Request
+                   -> Server W.Response
 
     -- | Formats the Frame (different protocols may format frames differently).
     format :: Proxy tag
@@ -73,7 +78,7 @@ class Transport tag where
     respond :: Proxy tag
             -> H.Status
             -> BL.ByteString
-            -> W.Request
+            -> Request
             -> W.Response
 
     -- | Used for _ => 'Application' communication.
@@ -82,7 +87,7 @@ class Transport tag where
     -- This function is used to create the Source for the 'Application'.
     receive :: Proxy tag
             -> Session
-            -> C.ResourceT IO (Maybe BL.ByteString)
+            -> Server (Maybe BL.ByteString)
 
     -- | Used for 'Application' => _ communication
     -- The '_' could stand for e.g. some web app communication with out server Application
@@ -90,7 +95,7 @@ class Transport tag where
     send :: Proxy tag
          -> Session
          -> BL.ByteString
-         -> C.ResourceT IO ()
+         -> Server ()
          
 ------------------------------------------------------------------------------
 -- | Server related types.
@@ -100,7 +105,7 @@ type Server = StateT ServerState (C.ResourceT IO)
 data ServerState = ServerState
     { serverSettings :: ServerSettings
     , serverEnvironment :: Environment
-    --, serverApplicationRouter :: ([TS.Text] -> Maybe (Application m))
+    , serverApplicationRouter :: [TS.Text] -> Maybe (Application (C.ResourceT IO))
     }
 
 data ServerSettings = ServerSettings

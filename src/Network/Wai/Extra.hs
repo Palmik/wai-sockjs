@@ -16,13 +16,11 @@ module Network.Wai.Extra
 ) where
 
 ------------------------------------------------------------------------------
-import           Control.Monad  (when)
-------------------------------------------------------------------------------
 import qualified Data.ByteString.Lazy as BL
 import           Data.Monoid                (mempty)
 ------------------------------------------------------------------------------
 import qualified Network.HTTP.Types as H
-import qualified Network.Wai        as W (Application, Request(..), Response(..), responseLBS)
+import qualified Network.Wai        as W (Request(..), Response(..), responseLBS)
 ------------------------------------------------------------------------------
 
 method :: Monad m => H.Method -> W.Request -> m a -> (W.Request -> m a) -> m a
