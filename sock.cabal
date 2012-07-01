@@ -1,0 +1,78 @@
+name:                sock
+version:             0.1
+synopsis:            SockJS server.
+license:             BSD3
+license-file:        LICENSE
+author:              Petr Pilař
+maintainer:          maintainer+the.palmik@gmail.com
+category:            Web
+build-type:          Simple
+cabal-version:       >=1.8
+
+extra-source-files:
+    LICENSE
+  , README.md
+
+library
+  hs-source-dirs: src
+  exposed-modules:
+      Network.Sock
+    , Network.Sock.Server
+    , Network.Sock.Transport
+    , Network.HTTP.Types.Extra
+    , Network.HTTP.Types.Request
+    , Network.HTTP.Types.Response
+    , Network.Wai.Sock
+
+  other-modules:
+      Control.Concurrent.MVar.Extra
+    , Control.Concurrent.MVar.Extra.Lifted
+    , Control.Concurrent.STM.TMChan.Extra
+    , Data.ByteString.Extra
+    , Network.Sock.Application
+    , Network.Sock.Frame
+    , Network.Sock.Handler
+    , Network.Sock.Request
+    , Network.Sock.Session
+    , Network.Sock.Types.Application
+    , Network.Sock.Types.Frame
+    , Network.Sock.Types.Request
+    , Network.Sock.Types.Server
+    , Network.Sock.Types.Session
+    , Network.Sock.Types.Transport
+
+  build-depends:
+      attoparsec
+    , attoparsec-enumerator
+    , aeson
+    , base                   == 4.*
+    , binary
+    , blaze-builder
+    , bytestring
+    , conduit                == 0.4.*
+    , containers
+    , cookie                 == 0.4.*
+    , data-default           == 0.4.*
+    , enumerator
+    , file-embed
+    , http-types
+    , lifted-base            == 0.1.*
+    , monad-control          == 0.3.*
+    , mtl                    == 2.1.*
+    , pureMD5
+    , random                 == 1.*
+    , stm
+    , stm-chans              == 1.3.*
+    , stm-conduit            == 0.4.*
+    , text
+    , tagged                 == 0.4.*
+    , transformers
+    , transformers-base      == 0.4.*
+    , unordered-containers   == 0.2.*
+    , vector
+    , wai
+    , wai-app-static
+    , warp                   == 1.2.*
+    , websockets             == 0.6.*
+
+  ghc-options: -fwarn-unused-imports
