@@ -1,17 +1,19 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Sock.Transport
+module Network.Sock.Types.Transport
 ( Transport(..)
 ) where
 
 ------------------------------------------------------------------------------
-import qualified Data.ByteString      as BL
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as BL (ByteString)
 import           Data.Proxy
 ------------------------------------------------------------------------------
-import qualified Network.HTTP.Types.Response as H
+import qualified Network.HTTP.Types          as H (Status)
+import qualified Network.HTTP.Types.Response as H (Response)
 ------------------------------------------------------------------------------
+import           Network.Sock.Types.Frame
+import           Network.Sock.Types.Server
 import           Network.Sock.Types.Request
 ------------------------------------------------------------------------------
 

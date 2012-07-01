@@ -1,4 +1,4 @@
-module Network.Sock.Frame
+module Network.Sock.Types.Frame
 ( Frame(..)
 ) where
 

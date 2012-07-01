@@ -1,12 +1,14 @@
 {-# LANGUAGE FlexibleContexts  #-}
 
-module Network.Sock.Application
+module Network.Sock.Types.Application
 ( Application(..)
 , ApplicationSettings(..)
 ) where
 
 ------------------------------------------------------------------------------
-import qualified Data.Conduit as C (sourceTMChan, sinkTMChan)
+import qualified Data.Conduit as C (Source, Sink)
+import qualified Data.ByteString.Lazy as BL (ByteString)
+import qualified Data.Text            as TS (Text)
 ------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------

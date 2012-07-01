@@ -1,4 +1,4 @@
-module Network.Sock.Request
+module Network.Sock.Types.Request
 ( Request(..)
 ) where
 

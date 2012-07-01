@@ -15,7 +15,7 @@ import           Control.Concurrent.MVar.Lifted
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
-import qualified Data.Conduit.TMChan    as C (sourceTMChan, sinkTMChan)
+import qualified Data.Conduit.TMChan  as C (sourceTMChan, sinkTMChan)
 import           Data.Default
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Application

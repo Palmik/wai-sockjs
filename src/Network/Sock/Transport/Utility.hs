@@ -20,10 +20,11 @@ import qualified Network.HTTP.Types.Request  as H
 import qualified Network.HTTP.Types.Response as H
 import qualified Network.HTTP.Types.Extra    as H
 ------------------------------------------------------------------------------
+import           Network.Sock.Types.Frame
+import           Network.Sock.Types.Request
+import           Network.Sock.Types.Server
 import           Network.Sock.Types.Session
 import           Network.Sock.Types.Transport
-import           Network.Sock.Types.Frame
-import           Network.Sock.Types.Server
 ------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------

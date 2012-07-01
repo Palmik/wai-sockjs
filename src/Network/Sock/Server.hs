@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Network.Sock.Server
-( ServerSettings(..)
+( Server(..)
+, ServerSettings(..)
 , ServerState(..)
-, Server(..)
+, ServerEnvironment(..)
+
 
 , getServerApplicationRouter
 , getServerEnvironment
@@ -12,7 +14,7 @@ module Network.Sock.Server
 ) where
 
 ------------------------------------------------------------------------------
-import           Control.Monad.Trans.State.Lazy
+import           Control.Monad.Trans.State.Strict
 ------------------------------------------------------------------------------
 import qualified Data.Text    as TS (Text)
 import qualified Data.Conduit as C
@@ -38,3 +40,4 @@ instance Default ServerSettings where
     def = ServerSettings
               { settingsSockVersion = "0.3"
               }
+              

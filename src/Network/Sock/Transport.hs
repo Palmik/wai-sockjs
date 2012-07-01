@@ -1,9 +1,12 @@
 module Network.Sock.Transport
 ( Transport(..)
 , XHRPolling
+
+, responseOptions
 ) where
     
 ------------------------------------------------------------------------------
-import           Network.Sock.Transport.Transport
-import           Network.Sock.Transport.XHR       (XHRPolling)
+import           Network.Sock.Types.Transport
+import           Network.Sock.Transport.Utility
+import           Network.Sock.Transport.XHR    
 ------------------------------------------------------------------------------

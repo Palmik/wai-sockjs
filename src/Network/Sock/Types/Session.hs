@@ -1,27 +1,25 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs            #-}
 
-module Network.Sock.Session
-( Session(sessionApplicationThread, sessionID, sessionIncomingBuffer, sessionOutgoingBuffer, sessionStatus, sessionTransportTag)
+module Network.Sock.Types.Session
+( Session(..)
 , SessionStatus(..)
 , SessionID
 ) where
 
 ------------------------------------------------------------------------------
-import           Control.Concurrent.MVar.Lifted
-import           Control.Concurrent.STM.TMChan
+import           Control.Concurrent.Lifted      (ThreadId)
+import           Control.Concurrent.MVar.Lifted (MVar)
+import           Control.Concurrent.STM.TMChan  (TMChan)
 ------------------------------------------------------------------------------
-import           Data.Proxy
-------------------------------------------------------------------------------
-import           Network.Sock.Types.Session
-import           Network.Sock.Types.Transport
+import qualified Data.ByteString.Lazy as BL     (ByteString)
+import qualified Data.Text            as TS     (Text)
 ------------------------------------------------------------------------------
 
 -- | Session
 data Session where
-    Session :: Transport tag =>
+    Session ::
         { sessionID :: SessionID
-        , sessionTransportTag :: Proxy tag
         , sessionStatus :: MVar SessionStatus
         , sessionIncomingBuffer :: TMChan BL.ByteString -- ^ This buffer is filled by calls to handleIncoming and later, we transform it into Source for the Application.
         , sessionOutgoingBuffer :: TMChan BL.ByteString -- ^ This buffer is filled by calls to send.

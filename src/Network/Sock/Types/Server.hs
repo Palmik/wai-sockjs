@@ -1,13 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Sock.Server
-( ServerSettings(..)
+module Network.Sock.Types.Server
+( Server(..)
+, ServerSettings(..)
 , ServerState(..)
-, Server(..)
+, ServerEnvironment(..)
 ) where
 
 ------------------------------------------------------------------------------
-import           Control.Monad.Trans.State.Strict
+import           Control.Monad.Trans.State.Strict (StateT)
+import           Control.Concurrent.MVar.Lifted   (MVar)
 ------------------------------------------------------------------------------
 import qualified Data.HashMap.Strict as HM (HashMap)
 import qualified Data.Text           as TS (Text)
