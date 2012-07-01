@@ -3,7 +3,6 @@
 
 module Network.Wai.Sock.Transport
 ( Transport(..)
-, sendFrame
 , respondFrame
 , respondFrame200
 , handleByStatus
@@ -50,13 +49,6 @@ Access-Control-Max-Age: 31536000
 Date: Sun, 01 Jul 2012 12:07:17 GMT
 Connection: keep-alive
 -}
-
-sendFrame :: Transport tag
-          => Proxy tag
-          -> Session
-          -> Frame
-          -> Server ()
-sendFrame tag ses = send tag ses . format tag
 
 respondFrame :: Transport tag
              => Proxy tag

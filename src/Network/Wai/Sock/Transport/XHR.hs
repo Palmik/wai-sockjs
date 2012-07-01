@@ -14,11 +14,11 @@ import           Control.Monad.Base                          (MonadBase, liftBas
 import qualified Control.Monad.STM                    as STM (STM, atomically)
 import           Control.Monad.Trans.Class                   (lift)
 ------------------------------------------------------------------------------
-import qualified Data.Aeson             as AE
-import           Data.Maybe                   (fromJust)
-import           Data.Monoid                  ((<>))
-import           Data.ByteString.Extra        (convertBL2BS)
-import qualified Data.ByteString.Lazy   as BL (ByteString)
+import qualified Data.Aeson              as AE
+import           Data.Maybe                    (fromJust)
+import           Data.Monoid                   ((<>))
+import           Data.ByteString.Extra         (convertBL2BS)
+import qualified Data.ByteString.Lazy    as BL (ByteString)
 ------------------------------------------------------------------------------
 import qualified Network.Wai        as W (Response(..), responseLBS)
 import           Network.Wai.Extra
@@ -59,8 +59,6 @@ instance Transport XHRPolling where
             handleO :: Session -> Server (SessionStatus, W.Response)
             handleO ses = do
                 -- TODO: Reset the timeout timer.
-                -- If the outgoing buffer is empty, we should wait until it's not so that we can send some response.
-                -- If the outgoing buffer is not empty, we should send all messages as JSON encoded array of strings.
                 let ch = sessionOutgoingBuffer ses
                 liftBase . atomically $ do
                     closed <- isClosedTMChan ch
@@ -87,9 +85,18 @@ instance Transport XHRPolling where
                         <> headerJSESSIONID (requestRaw req)
           
 
-    receive _ ses = atomically $ readTMChan $ sessionIncomingBuffer ses
+    {-
+    receive _ ses = liftBase . atomically $ do
+        -- If the outgoing buffer is empty, we should wait until it's not so that we can send some response.
+        -- If the outgoing buffer is not empty, we should send all messages as JSON encoded array of strings.
+        empty  <- isEmptyTMChan chan
+        if empty
+           then map convertBL2BS . maybeToList <$> readTMChan chan
+           else map convertBL2BS <$> getTMChanContents chan
+        where chan = sessionOutgoingBuffer ses
 
     send _ ses = atomically . writeTMChan (sessionOutgoingBuffer ses)
+    -}
 
 ------------------------------------------------------------------------------
 -- |
@@ -142,7 +149,9 @@ instance Transport XHRSend where
                         <> headerCORS "*" (requestRaw req)
                         <> headerJSESSIONID (requestRaw req)
 
+    {-
     receive _ ses = atomically . readTMChan $ sessionIncomingBuffer ses
 
     send _ ses = atomically . writeTMChan (sessionOutgoingBuffer ses)
+    -}
                                                                              

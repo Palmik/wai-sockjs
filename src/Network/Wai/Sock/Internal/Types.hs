@@ -85,13 +85,15 @@ class Transport tag where
             -> Request
             -> W.Response
 
+    {-
     -- | Used for _ => 'Application' communication.
-    -- Awaits a message from the Session's buffer. In case of WebSocket, we call receive (WS is the only transport why this function is neccessary).
+    -- Awaits a message from the Session's buffer (or empties the whole buffer if there are multiple messages in it).
+    -- In case of WebSocket, we call receive (WS is the only transport why this function is neccessary).
     -- The '_' could stand for e.g. some web app communication with out server Application
     -- This function is used to create the Source for the 'Application'.
     receive :: Proxy tag
             -> Session
-            -> Server (Maybe BL.ByteString)
+            -> Server [BL.ByteString]
 
     -- | Used for 'Application' => _ communication
     -- The '_' could stand for e.g. some web app communication with out server Application
@@ -100,6 +102,7 @@ class Transport tag where
          -> Session
          -> BL.ByteString
          -> Server ()
+    -}
          
 ------------------------------------------------------------------------------
 -- | Server related types.

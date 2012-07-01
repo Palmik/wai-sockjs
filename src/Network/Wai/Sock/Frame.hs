@@ -24,3 +24,5 @@ encodeFrame (FrameOpen) = "o"
 encodeFrame (FrameHeartbeat) = "h"
 encodeFrame (FrameMessages xs) = "a" <> AE.encode xs
 encodeFrame (FrameClose n m) = "c[" <> AE.encode n <> "," <> AE.encode m <> "]"
+
+-- TODO: Add special escaping as per http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-130
