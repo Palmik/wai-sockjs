@@ -1,0 +1,19 @@
+module Network.Sock.Request
+( Request(..)
+) where
+
+------------------------------------------------------------------------------
+import qualified Data.Conduit           as C
+------------------------------------------------------------------------------
+import qualified Network.HTTP.Types.Request as H
+------------------------------------------------------------------------------
+import           Network.Sock.Types.Session
+import           Network.Sock.Types.Application
+------------------------------------------------------------------------------
+
+-- | Request wrapper type.
+data Request = Request
+    { requestRaw :: H.Request
+    , requestSessionID :: SessionID
+    , requestApplication :: Application (C.ResourceT IO)
+    }

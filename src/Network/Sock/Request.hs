@@ -1,11 +1,10 @@
-module Network.Wai.Sock.Request
+module Network.Sock.Request
 ( Request(..)
 
 , requestMethod
 , requestHeaders
-, pathInfo
+, requestPath
 , requestBody
-, consumeRequestBody
 ) where
 
 ------------------------------------------------------------------------------
@@ -17,23 +16,21 @@ import qualified Data.Conduit           as C
 import qualified Data.Conduit.List      as C
 import qualified Data.Text              as TS (Text)
 ------------------------------------------------------------------------------
-import qualified Network.HTTP.Types as H (RequestHeaders, Method)
-import qualified Network.Wai        as W (Request(..))
+import qualified Network.HTTP.Types         as H (RequestHeaders, Method)
+import qualified Network.HTTP.Types.Request as H
 ------------------------------------------------------------------------------
-import           Network.Wai.Sock.Internal.Types (Request(..))
+import           Network.Sock.Types.Request
 ------------------------------------------------------------------------------
 
 requestMethod :: Request -> H.Method
-requestMethod = W.requestMethod . requestRaw
+requestMethod = H.requestMethod . requestRaw
 
 requestHeaders :: Request -> H.RequestHeaders
-requestHeaders = W.requestHeaders . requestRaw
+requestHeaders = H.requestHeaders . requestRaw
 
-pathInfo :: Request -> [TS.Text]
-pathInfo = W.pathInfo . requestRaw
+requestPath :: Request -> [TS.Text]
+requestPath = H.requestPath . requestRaw
 
-requestBody :: Request -> C.Source (C.ResourceT IO) BS.ByteString
-requestBody = W.requestBody . requestRaw
+requestBody :: Request -> BL.ByteString
+requestBody = H.requestBody . requestRaw
 
-consumeRequestBody :: Request -> C.ResourceT IO BL.ByteString
-consumeRequestBody req = BL.fromChunks <$> (requestBody req C.$$ C.consume)

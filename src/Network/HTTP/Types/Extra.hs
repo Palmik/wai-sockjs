@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Wai.Extra
+module Network.HTTP.Types.Extra
 ( response200
 , response204
 , response304
@@ -15,9 +15,6 @@ module Network.Wai.Extra
 , headerJSESSIONID
 , headerJS
 , headerPlain
-
-, method
-, methods
 ) where
 
 ------------------------------------------------------------------------------
@@ -26,35 +23,26 @@ import qualified Data.ByteString.Lazy as BL
 import           Data.Maybe
 import           Data.Monoid                (mempty, (<>))
 ------------------------------------------------------------------------------
-import qualified Network.HTTP.Types as H
-import qualified Network.Wai        as W (Request(..), Response(..), responseLBS)
-import           Web.Cookie
+import qualified Network.HTTP.Types          as H
+import qualified Network.HTTP.Types.Request  as H
+import qualified Network.HTTP.Types.Response as H
+import           Web.Cookie                  as H
 ------------------------------------------------------------------------------
-
-method :: Monad m => H.Method -> W.Request -> m a -> (W.Request -> m a) -> m a
-method m req ac f
-    | m == W.requestMethod req = f req
-    | otherwise                = ac
-
-methods :: Monad m => [H.Method] -> W.Request -> m a -> (W.Request -> m a) -> m a
-methods ms req ac f
-    | W.requestMethod req `elem` ms = f req
-    | otherwise                     = ac
 
 ------------------------------------------------------------------------------
 -- | Response utility functions.
 
-response200 :: H.ResponseHeaders -> BL.ByteString -> W.Response
-response200 = W.responseLBS H.status200
+response200 :: H.ResponseHeaders -> BL.ByteString -> H.Response
+response200 = H.response H.status200
 
-response204 :: H.ResponseHeaders -> BL.ByteString -> W.Response
-response204 = W.responseLBS H.status204
+response204 :: H.ResponseHeaders -> BL.ByteString -> H.Response
+response204 = H.response H.status204
 
-response304 :: W.Response
-response304 = W.responseLBS H.status304 [] mempty
+response304 :: H.Response
+response304 = H.response H.status304 [] mempty
 
-response404 :: W.Response
-response404 = W.responseLBS H.status404 headerPlain mempty
+response404 :: H.Response
+response404 = H.response H.status404 headerPlain mempty
 
 ------------------------------------------------------------------------------
 -- | Header utility functions.
@@ -80,17 +68,17 @@ headerJS = [("Content-Type", "application/javascript; charset=UTF-8")]
 headerPlain :: H.ResponseHeaders
 headerPlain = [("Content-Type", "text/plain; charset=UTF-8")]
 
-headerJSESSIONID :: W.Request -> H.ResponseHeaders
+headerJSESSIONID :: H.Request -> H.ResponseHeaders
 headerJSESSIONID req = [("Set-Cookie", "JSESSIONID=" <> jsessionID <> "; path=/")]
     where jsessionID = fromMaybe "dummy" $
-                           lookup "Cookie" (W.requestHeaders req) >>=
-                           lookup "JSESSIONID" . parseCookies
+                           lookup "Cookie" (H.requestHeaders req) >>=
+                           lookup "JSESSIONID" . H.parseCookies
 
-headerCORS :: BS.ByteString -> W.Request -> H.ResponseHeaders
+headerCORS :: BS.ByteString -> H.Request -> H.ResponseHeaders
 headerCORS def req = allowHeaders ++ allowOrigin ++ allowCredentials
     where allowCredentials = [("Access-Control-Allow-Credentials", "true")]
           allowHeaders =
-              case lookup "Access-Control-Request-Headers" $ W.requestHeaders req of
+              case lookup "Access-Control-Request-Headers" $ H.requestHeaders req of
                    Just "" -> []
                    Just ah -> [("Access-Control-Allow-Headers", ah)]
                    Nothing -> []
@@ -99,5 +87,5 @@ headerCORS def req = allowHeaders ++ allowOrigin ++ allowCredentials
                    ""     -> []
                    "null" -> [("Access-Control-Allow-Origin", def)]
                    _      -> [("Access-Control-Allow-Origin", origin)]
-          origin = fromMaybe def . lookup "Origin" $ W.requestHeaders req
+          origin = fromMaybe def . lookup "Origin" $ H.requestHeaders req
 

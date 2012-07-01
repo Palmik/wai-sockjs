@@ -1,23 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Wai.Sock.Frame
+module Network.Sock.Frame
 ( Frame(..)
 , encodeFrame
 ) where
 
 ------------------------------------------------------------------------------
 import qualified Data.Aeson                 as AE
-import qualified Data.ByteString            as BS (ByteString)
 import qualified Data.ByteString.Lazy       as BL (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as BL ({- INSTANCES -})
 import           Data.Monoid                ((<>))
 ------------------------------------------------------------------------------
+import           Network.Sock.Types.Frame
+------------------------------------------------------------------------------
 
-data Frame
-    = FrameOpen
-    | FrameHeartbeat
-    | FrameMessages [BS.ByteString]
-    | FrameClose Int BS.ByteString
 
 encodeFrame :: Frame -> BL.ByteString
 encodeFrame (FrameOpen) = "o"

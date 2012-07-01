@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts  #-}
 
-module Network.Wai.Sock.Handler
+module Network.Sock.Handler
 ( sock
 ) where
 
@@ -23,12 +23,12 @@ import qualified Data.Text            as TS (Text, isPrefixOf, isInfixOf, isSuff
 import qualified Network.Wai        as W (Application, Request(..), Response(..))
 import           Network.Wai.Extra
 ------------------------------------------------------------------------------
-import           Network.Wai.Sock.Application
-import           Network.Wai.Sock.Environment
-import           Network.Wai.Sock.Request
-import           Network.Wai.Sock.Server
-import           Network.Wai.Sock.Transport
-import           Network.Wai.Sock.Transport.XHR
+import           Network.Sock.Application
+import           Network.Sock.Environment
+import           Network.Sock.Request
+import           Network.Sock.Server
+import           Network.Sock.Transport
+import           Network.Sock.Transport.XHR
 ------------------------------------------------------------------------------
 
 sock :: ServerSettings

@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Wai.Sock.Application
+module Network.Sock.Application
 ( Application(..)
 , ApplicationSettings(..)
 , forkApplication
@@ -18,7 +18,8 @@ import           Control.Monad.Trans.Control
 import qualified Data.Conduit.TMChan    as C (sourceTMChan, sinkTMChan)
 import           Data.Default
 ------------------------------------------------------------------------------
-import           Network.Wai.Sock.Internal.Types (Application(..), ApplicationSettings(..), Session(..))
+import           Network.Sock.Types.Application
+import           Network.Sock.Types.Session
 ------------------------------------------------------------------------------
 
 instance Default ApplicationSettings where
@@ -45,4 +46,3 @@ forkApplication Application{..} Session{..} =
     where runApplication =
               applicationDefinition (C.sourceTMChan sessionIncomingBuffer)
                                     (C.sinkTMChan sessionOutgoingBuffer)
-

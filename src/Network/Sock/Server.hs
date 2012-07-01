@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Wai.Sock.Server
+module Network.Sock.Server
 ( ServerSettings(..)
 , ServerState(..)
 , Server(..)
@@ -18,7 +18,8 @@ import qualified Data.Text    as TS (Text)
 import qualified Data.Conduit as C
 import           Data.Default
 ------------------------------------------------------------------------------
-import           Network.Wai.Sock.Internal.Types (ServerSettings(..), ServerState(..), Server(..), Environment(..), Application(..))
+import           Network.Sock.Types.Application
+import           Network.Sock.Types.Server
 ------------------------------------------------------------------------------
 
 runServer :: Server a -> ServerState -> C.ResourceT IO a
@@ -27,7 +28,7 @@ runServer = evalStateT
 getServerSettings :: Server ServerSettings
 getServerSettings = gets serverSettings
 
-getServerEnvironment :: Server Environment
+getServerEnvironment :: Server ServerEnvironment
 getServerEnvironment = gets serverEnvironment
 
 getServerApplicationRouter :: Server ([TS.Text] -> Maybe (Application (C.ResourceT IO)))
