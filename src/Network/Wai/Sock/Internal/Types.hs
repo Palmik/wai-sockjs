@@ -57,7 +57,11 @@ data Application m = Application
     }
 
 data ApplicationSettings = ApplicationSettings
-    { applicationPrefix :: [TS.Text]
+    { settingsApplicationPrefix :: [TS.Text]
+    , settingsCookiesNeeded :: Bool
+    , settingsAllowedOrigins :: [TS.Text]
+    , settingsWebsocketsEnabled :: Bool
+    , settingsSockURL :: TS.Text
     }
 
 ------------------------------------------------------------------------------
@@ -109,11 +113,7 @@ data ServerState = ServerState
     }
 
 data ServerSettings = ServerSettings
-    { serverSettingsWebsocketsEnabled :: Bool
-    , serverSettingsCookiesNeeded :: Bool
-    , serverSettingsAllowedOrigins :: TS.Text
-    , serverSettingsSockURL :: TS.Text
-    , serverSettingsSockVersion :: TS.Text
+    { settingsSockVersion :: TS.Text
     }
 
 ------------------------------------------------------------------------------

@@ -45,8 +45,9 @@ data XHRPolling = XHRPolling
 instance Transport XHRPolling where
     handleIncoming tag req = 
         case requestMethod req of
-             "POST" -> getSession sid tag >>= handleByStatus tag handleF handleO handleC handleW
-             _      -> return response404 -- ^ TODO: Handle OPTIONS
+             "POST"    -> getSession sid tag >>= handleByStatus tag handleF handleO handleC handleW
+             "OPTIONS" -> return . responseOptions ["OPTIONS", "POST"] $ requestRaw req
+             _         -> return response404 -- ^ TODO: Handle OPTIONS
         
         where
             handleF :: Session -> Server (SessionStatus, W.Response)
@@ -66,8 +67,8 @@ instance Transport XHRPolling where
                     empty  <- isEmptyTMChan ch
                     case () of
                          _ | closed    -> return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req) -- This should not happen (we close the channel only when we close the session)
-                           | empty     -> (\x -> (SessionOpened, respondFrame200 tag (FrameMessages [convertBL2BS $ fromJust x]) req)) <$> readTMChan ch -- We could use TupleSections extension here instead.
-                           | otherwise -> (\x -> (SessionOpened, respondFrame200 tag (FrameMessages (map convertBL2BS x)) req)) <$> getTMChanContents ch -- We could use TupleSections extension here instead.
+                           | empty     -> (\x -> (SessionOpened, respondFrame200 tag (FrameMessages [convertBL2BS $ fromJust x]) req)) <$> readTMChan ch
+                           | otherwise -> (\x -> (SessionOpened, respondFrame200 tag (FrameMessages (map convertBL2BS x)) req)) <$> getTMChanContents ch
 
             handleC :: Session -> Server (SessionStatus, W.Response)
             handleC _ = return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req)
@@ -80,7 +81,11 @@ instance Transport XHRPolling where
 
     format _ str = encodeFrame str <> "\n"
 
-    respond _ st str _ = W.responseLBS st [] str -- TODO: Add proper headers.
+    respond _ st str req = W.responseLBS st headers str
+        where headers =    headerJS
+                        <> headerCORS "*" (requestRaw req)
+                        <> headerJSESSIONID (requestRaw req)
+          
 
     receive _ ses = atomically $ readTMChan $ sessionIncomingBuffer ses
 
@@ -95,13 +100,13 @@ data XHRSend = XHRSend
 instance Transport XHRSend where
     handleIncoming tag req =
         case requestMethod req of
-             "POST" -> do
+             "POST"    -> do
                  ms <- lookupSession sid
                  case ms of
                       Nothing -> return response404 -- ^ Sending to non-existing session results in 404. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-79)
                       Just s  -> handleByStatus tag handleF handleO handleC handleW s
-                    -- TODO: Handle OPTIONS
-             _      -> return response404
+             "OPTIONS" -> return . responseOptions ["OPTIONS", "POST"] $ requestRaw req
+             _         -> return response404
 
         where
             -- | It should never come to this handler, since XHRSend never creates a session.
@@ -121,7 +126,7 @@ instance Transport XHRSend where
                      Just xs -> do
                          atomically $ writeTMChanList (sessionIncomingBuffer ses) xs
                          return $ respond tag H.status204 "" req
-                     Nothing | body == "" -> return $ respond tag H.status500 "Payload expected." req -- If the body of request is empty, report it. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-80)
+                     Nothing | body == "" -> return $ respond tag H.status500 "Payload expected." req     -- If the body of request is empty, report it. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-80)
                              | otherwise  -> return $ respond tag H.status500 "Broken JSON encoding." req -- If the body of request is not valid JSON, report it. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-80)
 
             decode :: BL.ByteString -> Maybe [BL.ByteString]
@@ -132,7 +137,10 @@ instance Transport XHRSend where
 
     format _ str = encodeFrame str <> "\n"
 
-    respond _ st str _ = W.responseLBS st [] str -- TODO: Add proper headers.
+    respond _ st str req = W.responseLBS st headers str
+        where headers =    headerPlain
+                        <> headerCORS "*" (requestRaw req)
+                        <> headerJSESSIONID (requestRaw req)
 
     receive _ ses = atomically . readTMChan $ sessionIncomingBuffer ses
 

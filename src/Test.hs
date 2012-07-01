@@ -10,13 +10,24 @@ import           Network.Wai.Sock
 import qualified Network.Wai.Handler.Warp as W
 
 echo = Application
-    { applicationSettings = ApplicationSettings ["echo"]
-    , applicationDefinition = def
+    { applicationSettings = def
+          { settingsApplicationPrefix = ["echo"]
+          }
+    , applicationDefinition = definition
     }
-    where def source sink = source $$ sink
+    where definition source sink = source $$ sink
+
+disabledWebsocketEcho = Application
+    { applicationSettings = def
+          { settingsApplicationPrefix = ["disabled_websocket_echo"]
+          , settingsWebsocketsEnabled = False
+          }
+    , applicationDefinition = definition
+    }
+    where definition source sink = source $$ sink
 
 router :: [Application m] -> [TS.Text] -> Maybe (Application m)
-router apps pathInfo = find (\app -> applicationPrefix (applicationSettings app) `isPrefixOf` pathInfo) apps
+router apps pathInfo = find (\app -> settingsApplicationPrefix (applicationSettings app) `isPrefixOf` pathInfo) apps
 
 runSockServer :: W.Port -> ([TS.Text] -> Maybe (Application (ResourceT IO))) -> IO ()
 runSockServer p r = do
@@ -24,4 +35,4 @@ runSockServer p r = do
     let env = Environment { envSessions = mvsm }
     W.runSettings W.defaultSettings { W.settingsPort = p } (sock def env r)
 
-main = runSockServer 8080 (router [echo])
+main = runSockServer 8080 (router [echo, disabledWebsocketEcho])

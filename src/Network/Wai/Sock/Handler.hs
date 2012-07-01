@@ -8,7 +8,6 @@ module Network.Wai.Sock.Handler
 ------------------------------------------------------------------------------
 import           System.Random (randomRIO)
 ------------------------------------------------------------------------------
-import           Control.Applicative
 import           Control.Monad.IO.Class
 ------------------------------------------------------------------------------
 import qualified Data.Aeson           as AE (encode, object)
@@ -19,7 +18,7 @@ import qualified Data.Conduit         as C
 import           Data.Digest.Pure.MD5       (md5)
 import           Data.Monoid
 import           Data.Proxy
-import qualified Data.Text            as TS (Text, isPrefixOf, isSuffixOf)
+import qualified Data.Text            as TS (Text, isPrefixOf, isInfixOf, isSuffixOf)
 ------------------------------------------------------------------------------
 import qualified Network.Wai        as W (Application, Request(..), Response(..))
 import           Network.Wai.Extra
@@ -31,8 +30,6 @@ import           Network.Wai.Sock.Server
 import           Network.Wai.Sock.Transport
 import           Network.Wai.Sock.Transport.XHR
 ------------------------------------------------------------------------------
-
--- TODO: ServerSettings, Environment and ([TS.Text] -> Maybe (Application m)) should be part of Server monad.
 
 sock :: ServerSettings
      -> Environment
@@ -54,41 +51,58 @@ handleSubroutes app req =
         -- TODO: Add OPTIONS response.
         ("GET", [])          -> return responseGreeting
         ("GET", [""])        -> return responseGreeting
-        ("GET", ["info"])    -> responseInfo
+        ("GET",     ["info"]) -> responseInfo (applicationSettings app) req
+        ("OPTIONS", ["info"]) -> return $ responseOptions ["OPTIONS", "GET"] req
         ("GET", [r])
-            | isIframe r     -> responseIframe req
-        (_, [_, sid, trans]) -> handleTransport trans (Request req sid app)
+            | isIframe r     -> return $ responseIframe (applicationSettings app) req
+        (_, [srvrid, sid, trans])
+            | okID srvrid && okID sid -> responseTransport trans (Request req sid app) -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-40
+            | otherwise               -> return response404
         _                    -> return response404
                                                            
-    where suffix     = drop (length . applicationPrefix $ applicationSettings app) $ W.pathInfo req
+    where suffix     = drop (length . settingsApplicationPrefix $ applicationSettings app) $ W.pathInfo req
           isIframe p = TS.isPrefixOf "iframe" p && TS.isSuffixOf ".html" p
+          okID sid   = not (TS.isInfixOf "." sid || sid == "")
 
 
-handleTransport :: TS.Text
-                -> Request
-                -> Server W.Response
-handleTransport trans req =
+------------------------------------------------------------------------------
+-- | Used as a response to http://example.com/<application_prefix>/<server_id>/<session_id>/<transport>
+--
+--   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-36 and the following sections.
+responseTransport :: TS.Text
+                  -> Request
+                  -> Server W.Response
+responseTransport trans req =
     case trans of
-        "websocket"     -> return response404
-        "xhr"           -> handle (Proxy :: Proxy XHRPolling)
-        "xhr_send"      -> handle (Proxy :: Proxy XHRSend)
-        "xhr_streaming" -> return response404
-        "eventsource"   -> return response404
-        "htmlfile"      -> return response404
-        "jsonp"         -> return response404
-        "jsonp_send"    -> return response404
+        "websocket"     -> return response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-50
+        "xhr"           -> handle (Proxy :: Proxy XHRPolling)  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
+        "xhr_send"      -> handle (Proxy :: Proxy XHRSend)     -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
+        "xhr_streaming" -> return response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-83
+        "eventsource"   -> return response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-91
+        "htmlfile"      -> return response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-100
+        "jsonp"         -> return response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
+        "jsonp_send"    -> return response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
         _               -> return response404
     where handle tag = handleIncoming tag req
  
 ------------------------------------------------------------------------------
--- | Standard responses (greeting, info, iframe)
-
+-- | Used as a response to:
+--
+--     * http://example.com/<application_prefix>/
+--     * http://example.com/<application_prefix>
+--
+--   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-12
 responseGreeting :: W.Response
 responseGreeting = response200 headerPlain "Welcome to SockJS!\n"
 
-responseIframe :: W.Request
-               -> Server W.Response
-responseIframe req = go . convertTS2BL . serverSettingsSockURL <$> getServerSettings
+------------------------------------------------------------------------------
+-- | Used as a response to http://example.com/<application_prefix>/iframe*.html
+--
+--   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-15
+responseIframe :: ApplicationSettings
+               -> W.Request
+               -> W.Response
+responseIframe appSet req = go . convertTS2BL $ settingsSockURL appSet
     where
       go url = case lookup "If-None-Match" (W.requestHeaders req) of
                     (Just s) | s == hashed -> response304
@@ -112,17 +126,20 @@ responseIframe req = go . convertTS2BL . serverSettingsSockURL <$> getServerSett
               \</body>\n\
               \</html>"
           hashed  = convertBL2BS . BI.encode $ md5 content
-          headers = headerHTML ++ headerCache ++ headerETag hashed
+          headers = headerHTML <> headerCached <> headerETag hashed
 
-responseInfo :: Server W.Response
-responseInfo = do
+------------------------------------------------------------------------------
+-- | Used as a response to http://example.com/info
+--
+--   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-26
+responseInfo :: ApplicationSettings
+             -> W.Request
+             -> Server W.Response
+responseInfo appSet req = do
     ent <- liftIO $ randomRIO ((0, 4294967295) :: (Int, Int))
-    ssWS <- serverSettingsWebsocketsEnabled <$> getServerSettings
-    ssCN <- serverSettingsCookiesNeeded <$> getServerSettings
-    ssOR <- serverSettingsAllowedOrigins <$> getServerSettings
-    return . response200 headerJSON . AE.encode $ AE.object
-        [ "websocket"     .= ssWS
-        , "cookie_needed" .= ssCN
-        , "origins"       .= ssOR
+    return . response200 (headerJSON <> headerNotCached <> headerCORS "*" req) . AE.encode $ AE.object
+        [ "websocket"     .= settingsWebsocketsEnabled appSet
+        , "cookie_needed" .= settingsCookiesNeeded     appSet
+        , "origins"       .= settingsAllowedOrigins    appSet
         , "entropy"       .= ent
         ]

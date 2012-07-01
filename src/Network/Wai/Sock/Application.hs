@@ -1,5 +1,6 @@
-{-# LANGUAGE RecordWildCards  #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Network.Wai.Sock.Application
 ( Application(..)
@@ -15,9 +16,19 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
 import qualified Data.Conduit.TMChan    as C (sourceTMChan, sinkTMChan)
+import           Data.Default
 ------------------------------------------------------------------------------
 import           Network.Wai.Sock.Internal.Types (Application(..), ApplicationSettings(..), Session(..))
 ------------------------------------------------------------------------------
+
+instance Default ApplicationSettings where
+    def = ApplicationSettings
+              { settingsApplicationPrefix = ["foo"]
+              , settingsWebsocketsEnabled = True
+              , settingsCookiesNeeded = True
+              , settingsAllowedOrigins = ["*:*"]
+              , settingsSockURL = "http://cdn.sockjs.org/sockjs-0.3.min.js"
+              }
 
 -- | If there is no forked Application associated with the given Session
 --   and if noone is trying to fork one (the MVar is not empty), forks the

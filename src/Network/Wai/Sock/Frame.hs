@@ -22,5 +22,5 @@ data Frame
 encodeFrame :: Frame -> BL.ByteString
 encodeFrame (FrameOpen) = "o"
 encodeFrame (FrameHeartbeat) = "h"
-encodeFrame (FrameMessages xs) = AE.encode xs
+encodeFrame (FrameMessages xs) = "a" <> AE.encode xs
 encodeFrame (FrameClose n m) = "c[" <> AE.encode n <> "," <> AE.encode m <> "]"

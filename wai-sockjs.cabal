@@ -42,7 +42,7 @@ library
     , bytestring
     , conduit                == 0.4.*
     , containers
-    , cookie
+    , cookie                 == 0.4.*
     , data-default           == 0.4.*
     , enumerator
     , file-embed
