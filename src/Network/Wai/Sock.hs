@@ -4,7 +4,6 @@ module Network.Wai.Sock
 
 ------------------------------------------------------------------------------
 import           Control.Applicative
-import           Control.Monad.Trans.Class
 ------------------------------------------------------------------------------
 import qualified Data.ByteString.Lazy   as BL (fromChunks)
 import qualified Data.Conduit           as C
@@ -21,10 +20,12 @@ import qualified Network.Sock.Server  as S
 sock :: S.ServerState
      -> W.Request
      -> C.ResourceT IO W.Response
-sock state req = S.runServer (convertRequest req >>= S.sock >>= convertResponse) state
+sock state r = do
+    req <- convertRequest r
+    convertResponse <$> (S.runServer (S.sock req) state)
 
-convertRequest :: W.Request -> S.Server H.Request
-convertRequest req = lift $ do
+convertRequest :: W.Request -> C.ResourceT IO H.Request
+convertRequest req = do
     body <- BL.fromChunks <$> (W.requestBody req C.$$ C.consume)
     return $ H.Request
                  { H.requestBody = body
@@ -33,8 +34,7 @@ convertRequest req = lift $ do
                  , H.requestMethod = W.requestMethod req
                  }
 
-convertResponse :: H.Response -> S.Server W.Response
-convertResponse res = lift $
-    return $ W.responseLBS (H.responseStatus res)
-                           (H.responseHeaders res)
-                           (H.responseBody res)
+convertResponse :: H.Response -> W.Response
+convertResponse res = W.responseLBS (H.responseStatus res)
+                                    (H.responseHeaders res)
+                                    (H.responseBody res)

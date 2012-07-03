@@ -3,10 +3,12 @@
 ------------------------------------------------------------------------------
 import           Control.Concurrent.MVar.Lifted
 ------------------------------------------------------------------------------
-import qualified Data.HashMap.Lazy as HM
+import qualified Data.HashMap.Strict as HM
 import           Data.Conduit
+import qualified Data.Conduit.List   as C
 import           Data.Default
 import           Data.List
+import           Data.Monoid
 import qualified Data.Text as TS
 ------------------------------------------------------------------------------
 import qualified Network.Sock.Application as S
@@ -22,6 +24,15 @@ echo = S.Application
     , S.applicationDefinition = definition
     }
     where definition source sink = source $$ sink
+
+harrEcho = S.Application
+    { S.applicationSettings = def
+          { S.settingsApplicationPrefix = ["harr_echo"]
+          }
+    , S.applicationDefinition = definition
+    }
+    where definition source sink = source $= C.map foo $$ sink
+              where foo x = "Harr! " <> x
 
 disabledWebsocketEcho = S.Application
     { S.applicationSettings = def
@@ -49,4 +60,4 @@ runSockServer p r = do
                 }
     W.runSettings W.defaultSettings { W.settingsPort = p } (S.sock state)
 
-main = runSockServer 8080 (router [echo, disabledWebsocketEcho])
+main = runSockServer 8080 (router [echo, harrEcho, disabledWebsocketEcho])

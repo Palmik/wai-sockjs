@@ -100,6 +100,54 @@ instance Transport XHRPolling where
 
 ------------------------------------------------------------------------------
 -- |
+data XHRStreaming = XHRStreaming
+
+-- | XHRStreaming Transport represents the /xhr_streaming route.
+--   The /xhr_streaming route serves to open the session and to read the streamed data.
+instance Transport XHRStreaming where
+    handleIncoming tag req =
+        case requestMethod req of
+             "POST"    -> getSession sid >>= handleByStatus tag handleF handleO handleC handleW
+             "OPTIONS" -> return . responseOptions ["OPTIONS", "POST"] $ requestRaw req
+             _         -> return H.response404 -- ^ TODO: Handle OPTIONS
+
+        where
+            handleF :: Session -> Server (SessionStatus, H.Response)
+            handleF ses = do
+                -- TODO: Start the timers.
+                lift $ forkApplication app ses
+                return (SessionOpened, respondFrame200 tag FrameOpen req)
+
+            handleO :: Session -> Server (SessionStatus, H.Response)
+            handleO ses = do
+                -- TODO: Reset the timeout timer.
+                let ch = sessionOutgoingBuffer ses
+                liftBase . atomically $ do
+                    closed <- isClosedTMChan ch
+                    empty  <- isEmptyTMChan ch
+                    case () of
+                         _ | closed    -> return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req) -- This should not happen (we close the channel only when we close the session)
+                           | empty     -> (\x -> (SessionOpened, respondFrame200 tag (FrameMessages [convertBL2BS $ fromJust x]) req)) <$> readTMChan ch
+                           | otherwise -> (\x -> (SessionOpened, respondFrame200 tag (FrameMessages (map convertBL2BS x)) req)) <$> getTMChanContents ch
+
+            handleC :: Session -> Server (SessionStatus, H.Response)
+            handleC _ = return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req)
+
+            handleW :: Session -> Server H.Response
+            handleW _ = return $ respondFrame200 tag (FrameClose 2010 "Another connection still open") req
+
+            sid = requestSessionID req
+            app = requestApplication req
+
+    format _ str = encodeFrame str <> "\n"
+
+    respond _ st str req = H.response st headers str
+        where headers =    H.headerJS
+                        <> H.headerCORS "*" (requestRaw req)
+                        <> H.headerJSESSIONID (requestRaw req)
+
+------------------------------------------------------------------------------
+-- |
 data XHRSend = XHRSend
 
 -- | XHRPolling Transport represents the /xhr_send route.

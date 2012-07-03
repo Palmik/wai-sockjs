@@ -6,7 +6,7 @@ module Network.Sock.Types.Application
 ) where
 
 ------------------------------------------------------------------------------
-import qualified Data.Conduit as C (Source, Sink)
+import qualified Data.Conduit         as C (Source, Sink)
 import qualified Data.ByteString.Lazy as BL (ByteString)
 import qualified Data.Text            as TS (Text)
 ------------------------------------------------------------------------------
