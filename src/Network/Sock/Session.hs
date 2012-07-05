@@ -2,7 +2,7 @@
 {-# LANGUAGE GADTs            #-}
 
 module Network.Sock.Session
-( Session(sessionApplicationThread, sessionID, sessionIncomingBuffer, sessionOutgoingBuffer, sessionStatus)
+( Session(..)
 , SessionStatus(..)
 , SessionID
 

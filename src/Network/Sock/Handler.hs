@@ -1,46 +1,69 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module Network.Sock.Handler
 ( sock
+, sockWS
 ) where
 
 ------------------------------------------------------------------------------
 import           System.Random (randomRIO)
 ------------------------------------------------------------------------------
-import           Control.Monad.IO.Class
+import           Control.Concurrent     (forkIO)
+import           Control.Concurrent.STM        (atomically)
+import           Control.Concurrent.STM.TMChan (readTMChan, writeTMChan)
+import           Control.Monad
+import           Control.Monad.Trans           (liftIO)
 ------------------------------------------------------------------------------
 import qualified Data.Aeson           as AE (encode, object)
 import           Data.Aeson                 ((.=))
 import qualified Data.Binary          as BI (encode)
+import qualified Data.ByteString      as BS
 import           Data.ByteString.Extra      (convertBL2BS, convertTS2BL)
 import qualified Data.Conduit         as C
+import qualified Data.Conduit.TMChan  as C  (sourceTMChan, sinkTMChan)
 import           Data.Digest.Pure.MD5       (md5)
 import           Data.Monoid
+import           Data.Maybe
 import           Data.Proxy
 import qualified Data.Text            as TS (Text, isPrefixOf, isInfixOf, isSuffixOf)
 ------------------------------------------------------------------------------
+import qualified Network.HTTP.Types          as H
 import qualified Network.HTTP.Types.Extra    as H
 import qualified Network.HTTP.Types.Request  as H
 import qualified Network.HTTP.Types.Response as H
+import qualified Network.WebSockets          as WS
 ------------------------------------------------------------------------------
 import           Network.Sock.Application
 import           Network.Sock.Request
 import           Network.Sock.Server
+import           Network.Sock.Session
 import           Network.Sock.Transport
 import           Network.Sock.Transport.XHR
 ------------------------------------------------------------------------------
 
+------------------------------------------------------------------------------
+-- |
 sock :: H.Request -> Server H.Response
 sock req = do
---     maybe (return H.response404)
---           (flip handleSubroutes req)
---           (router <$> getServerApplicationRouter)
     router <- getServerApplicationRouter
     case router $ H.requestPath req of
          Just app -> handleSubroutes app req
          Nothing  -> return H.response404
 
+------------------------------------------------------------------------------
+-- |
+sockWS :: ServerState -> WS.Request -> WS.WebSockets WS.Hybi00 ()
+sockWS state req = do
+    let router = serverApplicationRouter state
+    case router . H.decodePathSegments $ WS.requestPath req of
+         Just app -> handleSubroutesWS app req
+         Nothing  -> WS.rejectRequest req "Invalid path."
+
+------------------------------------------------------------------------------
+-- |
+         
 handleSubroutes :: Application (C.ResourceT IO)
                 -> H.Request
                 -> Server H.Response
@@ -141,3 +164,34 @@ responseInfo appSet req = do
         , "origins"       .= settingsAllowedOrigins    appSet
         , "entropy"       .= ent
         ]
+
+------------------------------------------------------------------------------
+-- |
+
+handleSubroutesWS :: Application (C.ResourceT IO)
+                  -> WS.Request
+                  -> WS.WebSockets WS.Hybi00 ()
+handleSubroutesWS Application{..} req =
+    case suffix of
+         [_, _, "websocket"] -> do
+             s <- newSession "wssession"
+             let action = C.runResourceT $ applicationDefinition
+                                               (C.sourceTMChan $ sessionIncomingBuffer s)
+                                               (C.sinkTMChan $ sessionOutgoingBuffer s)
+             forkActionWS action s req
+         -- TODO: Handle raw WebSocket connection.
+         _                   -> WS.rejectRequest req "Invalid path."
+    where suffix = drop (length $ settingsApplicationPrefix applicationSettings) . H.decodePathSegments $ WS.requestPath req
+
+forkActionWS :: IO ()
+             -> Session
+             -> WS.Request
+             -> WS.WebSockets WS.Hybi00 ()
+forkActionWS app ses@Session{..} req = do
+    WS.acceptRequest req
+    sink <- WS.getSink
+    liftIO . WS.sendSink sink $ WS.textData ("o" :: BS.ByteString)
+    liftIO . forkIO . forever $ (atomically $ readTMChan sessionOutgoingBuffer) >>= WS.sendSink sink . WS.textData . fromJust
+    liftIO $ forkIO app
+    forever $ WS.receiveData >>= liftIO . atomically . writeTMChan sessionIncomingBuffer
+    return ()    

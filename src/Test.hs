@@ -46,8 +46,7 @@ disabledWebsocketEcho = S.Application
 router :: [S.Application m] -> [TS.Text] -> Maybe (S.Application m)
 router apps pathInfo = find (\app -> S.settingsApplicationPrefix (S.applicationSettings app) `isPrefixOf` pathInfo) apps
 
-runSockServer :: Port -> ([TS.Text] -> Maybe (S.Application (ResourceT IO))) -> IO ()
-runSockServer p r = do
+main = do
     sessions <- newMVar HM.empty
     let state =
             S.ServerState
@@ -55,9 +54,7 @@ runSockServer p r = do
                       S.ServerEnvironment
                           { S.environmentSessions = sessions
                           }
-                , S.serverApplicationRouter = r
+                , S.serverApplicationRouter = router [echo, harrEcho, disabledWebsocketEcho]
                 , S.serverSettings = def
                 }
-    W.runSettings W.defaultSettings { W.settingsPort = p } (S.sock state)
-
-main = runSockServer 8080 (router [echo, harrEcho, disabledWebsocketEcho])
+    S.runSockServer 8080 state

@@ -72,6 +72,7 @@ library
     , vector
     , wai
     , wai-app-static
+    , wai-websockets         == 1.2.*
     , warp                   == 1.2.*
     , websockets             == 0.6.*
 
