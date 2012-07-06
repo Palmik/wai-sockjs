@@ -15,14 +15,16 @@ import           Control.Concurrent.STM.TMChan  (TMChan)
 import qualified Data.ByteString.Lazy as BL     (ByteString)
 import qualified Data.Text            as TS     (Text)
 ------------------------------------------------------------------------------
+import           Network.Sock.Types.Message
+------------------------------------------------------------------------------
 
 -- | Session
 data Session where
     Session ::
         { sessionID :: SessionID
         , sessionStatus :: MVar SessionStatus
-        , sessionIncomingBuffer :: TMChan BL.ByteString -- ^ This buffer is filled by calls to handleIncoming and later, we transform it into Source for the Application.
-        , sessionOutgoingBuffer :: TMChan BL.ByteString -- ^ This buffer is filled by calls to send.
+        , sessionIncomingBuffer :: TMChan BL.ByteString     -- ^ This buffer is filled with incoming messages (parsed from request body or from WS' receive)
+        , sessionOutgoingBuffer :: TMChan Message           -- ^ This buffer is filled with outgoing messages which are then sent (as a response or with WS' sendSink)
         , sessionApplicationThread :: MVar (Maybe ThreadId) -- ^ If the MVar is empty, some thread is already trying to fork application.
                                                             --   If it contains Nothing, noone is forking nor has anyone forked yet.
                                                             --   If it contains Just a value, application was already forked.

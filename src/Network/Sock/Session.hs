@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs            #-}
+{-# LANGUAGE RecordWildCards  #-}
 
 module Network.Sock.Session
 ( Session(..)
@@ -7,6 +8,7 @@ module Network.Sock.Session
 , SessionID
 
 , newSession
+, closeSession
 
 , insertSession
 , lookupSession
@@ -15,7 +17,10 @@ module Network.Sock.Session
 
 ------------------------------------------------------------------------------
 import           Control.Applicative
+import           Control.Concurrent.Lifted            (killThread)
 import           Control.Concurrent.MVar.Lifted
+import qualified Control.Concurrent.MVar        as MV
+import           Control.Concurrent.STM               (atomically)
 import           Control.Concurrent.STM.TMChan
 import           Control.Monad.Base
 ------------------------------------------------------------------------------
@@ -24,6 +29,19 @@ import qualified Data.HashMap.Strict as HM (insert, lookup)
 import           Network.Sock.Types.Session
 import           Network.Sock.Server
 ------------------------------------------------------------------------------
+
+closeSession :: MonadBase IO m
+             => Session
+             -> m ()
+closeSession ses@Session{..} = do
+    -- TODO: Stop the timers.
+    -- Stop the application thread.
+    liftBase $ MV.withMVar sessionApplicationThread (maybe (return ()) killThread)
+
+    -- Close the buffers.
+    liftBase . atomically $ do
+        closeTMChan sessionIncomingBuffer
+        closeTMChan sessionOutgoingBuffer
 
 -- | Clever constructor. Sessions should be created using this function only.
 newSession :: MonadBase IO m

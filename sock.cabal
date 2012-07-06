@@ -34,6 +34,8 @@ library
     , Network.Sock.Handler
     , Network.Sock.Request
     , Network.Sock.Session
+    , Network.Sock.Transport.XHR
+    , Network.Sock.Transport.WebSocket
     , Network.Sock.Types.Application
     , Network.Sock.Types.Frame
     , Network.Sock.Types.Request

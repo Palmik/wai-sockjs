@@ -10,22 +10,16 @@ module Network.Sock.Handler
 ------------------------------------------------------------------------------
 import           System.Random (randomRIO)
 ------------------------------------------------------------------------------
-import           Control.Concurrent     (forkIO)
-import           Control.Concurrent.STM        (atomically)
-import           Control.Concurrent.STM.TMChan (readTMChan, writeTMChan)
-import           Control.Monad
-import           Control.Monad.Trans           (liftIO)
+import           Control.Monad.Trans (liftIO)
 ------------------------------------------------------------------------------
 import qualified Data.Aeson           as AE (encode, object)
 import           Data.Aeson                 ((.=))
 import qualified Data.Binary          as BI (encode)
-import qualified Data.ByteString      as BS
 import           Data.ByteString.Extra      (convertBL2BS, convertTS2BL)
 import qualified Data.Conduit         as C
 import qualified Data.Conduit.TMChan  as C  (sourceTMChan, sinkTMChan)
 import           Data.Digest.Pure.MD5       (md5)
 import           Data.Monoid
-import           Data.Maybe
 import           Data.Proxy
 import qualified Data.Text            as TS (Text, isPrefixOf, isInfixOf, isSuffixOf)
 ------------------------------------------------------------------------------
@@ -41,6 +35,7 @@ import           Network.Sock.Server
 import           Network.Sock.Session
 import           Network.Sock.Transport
 import           Network.Sock.Transport.XHR
+import           Network.Sock.Transport.WebSocket
 ------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -96,8 +91,8 @@ responseTransport :: TS.Text
 responseTransport trans req =
     case trans of
         "websocket"     -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-50
-        "xhr"           -> handle (Proxy :: Proxy XHRPolling)  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
-        "xhr_send"      -> handle (Proxy :: Proxy XHRSend)     -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
+        "xhr"           -> handle (Proxy :: Proxy XHRPolling)    -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
+        "xhr_send"      -> handle (Proxy :: Proxy XHRSend)       -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
         "xhr_streaming" -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-83
         "eventsource"   -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-91
         "htmlfile"      -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-100
@@ -171,27 +166,15 @@ responseInfo appSet req = do
 handleSubroutesWS :: Application (C.ResourceT IO)
                   -> WS.Request
                   -> WS.WebSockets WS.Hybi00 ()
-handleSubroutesWS Application{..} req =
+handleSubroutesWS app@Application{..} req =
     case suffix of
          [_, _, "websocket"] -> do
              s <- newSession "wssession"
              let action = C.runResourceT $ applicationDefinition
                                                (C.sourceTMChan $ sessionIncomingBuffer s)
                                                (C.sinkTMChan $ sessionOutgoingBuffer s)
-             forkActionWS action s req
+             runApplicationWS app s req
          -- TODO: Handle raw WebSocket connection.
          _                   -> WS.rejectRequest req "Invalid path."
     where suffix = drop (length $ settingsApplicationPrefix applicationSettings) . H.decodePathSegments $ WS.requestPath req
-
-forkActionWS :: IO ()
-             -> Session
-             -> WS.Request
-             -> WS.WebSockets WS.Hybi00 ()
-forkActionWS app ses@Session{..} req = do
-    WS.acceptRequest req
-    sink <- WS.getSink
-    liftIO . WS.sendSink sink $ WS.textData ("o" :: BS.ByteString)
-    liftIO . forkIO . forever $ (atomically $ readTMChan sessionOutgoingBuffer) >>= WS.sendSink sink . WS.textData . fromJust
-    liftIO $ forkIO app
-    forever $ WS.receiveData >>= liftIO . atomically . writeTMChan sessionIncomingBuffer
-    return ()    
+              

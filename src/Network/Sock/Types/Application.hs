@@ -10,12 +10,11 @@ import qualified Data.Conduit         as C (Source, Sink)
 import qualified Data.ByteString.Lazy as BL (ByteString)
 import qualified Data.Text            as TS (Text)
 ------------------------------------------------------------------------------
-
+import           Network.Sock.Types.Message
 ------------------------------------------------------------------------------
--- | Application related types.
 
 data Application m = Application
-    { applicationDefinition :: C.Source m BL.ByteString -> C.Sink BL.ByteString m () -> m ()
+    { applicationDefinition :: C.Source m BL.ByteString -> C.Sink Message m () -> m ()
     , applicationSettings :: ApplicationSettings
     }
 
