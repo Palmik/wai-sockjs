@@ -4,28 +4,21 @@ module Network.Sock.Request
 , requestMethod
 , requestHeaders
 , requestPath
+, requestQuery
 , requestBody
+, requestBodyConsumed
 ) where
 
 ------------------------------------------------------------------------------
-import qualified Data.ByteString.Lazy   as BL (ByteString)
-import qualified Data.Text              as TS (Text)
-------------------------------------------------------------------------------
-import qualified Network.HTTP.Types         as H (RequestHeaders, Method)
-import qualified Network.HTTP.Types.Request as H
+import           Network.HTTP.Types.Request
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Request
 ------------------------------------------------------------------------------
 
-requestMethod :: Request -> H.Method
-requestMethod = H.requestMethod . requestRaw
-
-requestHeaders :: Request -> H.RequestHeaders
-requestHeaders = H.requestHeaders . requestRaw
-
-requestPath :: Request -> [TS.Text]
-requestPath = H.requestPath . requestRaw
-
-requestBody :: Request -> BL.ByteString
-requestBody = H.requestBody . requestRaw
+instance IsRequest Request where
+    requestMethod  (Request raw _ _) = requestMethod raw
+    requestHeaders (Request raw _ _) = requestHeaders raw
+    requestQuery   (Request raw _ _) = requestQuery raw
+    requestPath    (Request raw _ _) = requestPath raw
+    requestBody    (Request raw _ _) = requestBody raw
 

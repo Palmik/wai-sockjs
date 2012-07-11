@@ -9,8 +9,9 @@ module Network.Sock.Types.Transport
 import qualified Data.ByteString.Lazy as BL (ByteString)
 import           Data.Proxy
 ------------------------------------------------------------------------------
-import qualified Network.HTTP.Types          as H (Status)
-import qualified Network.HTTP.Types.Response as H (Response)
+import qualified Network.HTTP.Types          as H (Status, ResponseHeaders)
+import qualified Network.HTTP.Types.Response as H (IsResponse(..))
+import qualified Network.HTTP.Types.Request  as H (IsRequest(..))
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Frame
 import           Network.Sock.Types.Server
@@ -19,21 +20,26 @@ import           Network.Sock.Types.Request
 
 -- | Transport
 class Transport tag where
-    handleIncoming :: Proxy tag
+    handleIncoming :: H.IsResponse res
+                   => Proxy tag
                    -> Request
-                   -> Server H.Response
+                   -> Server res
 
     -- | Formats the Frame (different protocols may format frames differently).
-    format :: Proxy tag
+    format :: H.IsRequest req
+           => Proxy tag
            -> Frame
+           -> req
            -> BL.ByteString
 
     -- | Used to create a response (headers might be transport & request dependent).
-    respond :: Proxy tag
+    respond :: H.IsResponse res
+            => Proxy tag
+            -> (H.Status -> H.ResponseHeaders -> a -> res)
             -> H.Status
-            -> BL.ByteString
+            -> a
             -> Request
-            -> H.Response
+            -> res
 
     {-
     -- | Used for _ => 'Application' communication.

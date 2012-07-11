@@ -1,3 +1,5 @@
+{-# LANGUAGE GADTs #-}
+
 module Network.Sock.Types.Request
 ( Request(..)
 ) where
@@ -12,8 +14,9 @@ import           Network.Sock.Types.Application
 ------------------------------------------------------------------------------
 
 -- | Request wrapper type.
-data Request = Request
-    { requestRaw :: H.Request
-    , requestSessionID :: SessionID
-    , requestApplication :: Application (C.ResourceT IO)
-    }
+data Request where
+    Request ::  H.IsRequest req =>
+        { requestRaw :: req
+        , requestSessionID :: SessionID
+        , requestApplication :: Application (C.ResourceT IO)
+        } -> Request

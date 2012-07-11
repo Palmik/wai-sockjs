@@ -14,6 +14,7 @@ module Network.HTTP.Types.Extra
 , headerJSON
 , headerJSESSIONID
 , headerJS
+, headerEventStream
 , headerPlain
 ) where
 
@@ -32,17 +33,17 @@ import           Web.Cookie                  as H
 ------------------------------------------------------------------------------
 -- | Response utility functions.
 
-response200 :: H.ResponseHeaders -> BL.ByteString -> H.Response
-response200 = H.response H.status200
+response200 :: H.IsResponse res => H.ResponseHeaders -> BL.ByteString -> res
+response200 = H.responseLBS H.status200
 
-response204 :: H.ResponseHeaders -> BL.ByteString -> H.Response
-response204 = H.response H.status204
+response204 :: H.IsResponse res => H.ResponseHeaders -> BL.ByteString -> res
+response204 = H.responseLBS H.status204
 
-response304 :: H.Response
-response304 = H.response H.status304 [] mempty
+response304 :: H.IsResponse res => res
+response304 = H.responseLBS H.status304 [] mempty
 
-response404 :: H.Response
-response404 = H.response H.status404 headerPlain mempty
+response404 :: H.IsResponse res => res
+response404 = H.responseLBS H.status404 headerPlain mempty
 
 ------------------------------------------------------------------------------
 -- | Header utility functions.
@@ -65,16 +66,19 @@ headerJSON = [("Content-Type", "application/json; charset=UTF-8")]
 headerJS :: H.ResponseHeaders
 headerJS = [("Content-Type", "application/javascript; charset=UTF-8")]
 
+headerEventStream :: H.ResponseHeaders
+headerEventStream = [("Content-Type", "text/event-stream; charset=UTF-8")]
+
 headerPlain :: H.ResponseHeaders
 headerPlain = [("Content-Type", "text/plain; charset=UTF-8")]
 
-headerJSESSIONID :: H.Request -> H.ResponseHeaders
+headerJSESSIONID :: H.IsRequest req => req -> H.ResponseHeaders
 headerJSESSIONID req = [("Set-Cookie", "JSESSIONID=" <> jsessionID <> "; path=/")]
     where jsessionID = fromMaybe "dummy" $
                            lookup "Cookie" (H.requestHeaders req) >>=
                            lookup "JSESSIONID" . H.parseCookies
 
-headerCORS :: BS.ByteString -> H.Request -> H.ResponseHeaders
+headerCORS :: H.IsRequest req => BS.ByteString -> req -> H.ResponseHeaders
 headerCORS def req = allowHeaders ++ allowOrigin ++ allowCredentials
     where allowCredentials = [("Access-Control-Allow-Credentials", "true")]
           allowHeaders =

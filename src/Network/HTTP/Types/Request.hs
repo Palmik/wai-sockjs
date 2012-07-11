@@ -1,17 +1,26 @@
 module Network.HTTP.Types.Request
-( Request(..)
+( IsRequest(..)
+, requestBodyConsumed
 ) where
 
 ------------------------------------------------------------------------------
-import qualified Data.ByteString.Lazy as BL (ByteString)
+import           Control.Applicative
+------------------------------------------------------------------------------
+import qualified Data.ByteString      as BS (ByteString)
+import qualified Data.ByteString.Lazy as BL (ByteString, fromChunks)
+import qualified Data.Conduit         as C
+import qualified Data.Conduit.List    as C
 import qualified Data.Text            as TS (Text)
 ------------------------------------------------------------------------------
 import           Network.HTTP.Types
 ------------------------------------------------------------------------------
 
-data Request = Request
-    { requestMethod :: Method
-    , requestHeaders :: RequestHeaders
-    , requestPath :: [TS.Text]
-    , requestBody :: BL.ByteString
-    }
+class IsRequest req where
+    requestMethod  :: req -> Method
+    requestHeaders :: req -> RequestHeaders
+    requestQuery   :: req -> Query
+    requestPath    :: req -> [TS.Text]
+    requestBody    :: req -> C.Source (C.ResourceT IO) BS.ByteString
+
+requestBodyConsumed :: IsRequest req => req -> C.ResourceT IO BL.ByteString
+requestBodyConsumed req = BL.fromChunks <$> (requestBody req C.$$ C.consume)

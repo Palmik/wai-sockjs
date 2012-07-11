@@ -35,12 +35,14 @@ import           Network.Sock.Server
 import           Network.Sock.Session
 import           Network.Sock.Transport
 import           Network.Sock.Transport.XHR
+import           Network.Sock.Transport.JSONP
 import           Network.Sock.Transport.WebSocket
+import           Network.Sock.Transport.EventSource
 ------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
 -- |
-sock :: H.Request -> Server H.Response
+sock :: (H.IsRequest req, H.IsResponse res) => req -> Server res
 sock req = do
     router <- getServerApplicationRouter
     case router $ H.requestPath req of
@@ -59,9 +61,10 @@ sockWS state req = do
 ------------------------------------------------------------------------------
 -- |
          
-handleSubroutes :: Application (C.ResourceT IO)
-                -> H.Request
-                -> Server H.Response
+handleSubroutes :: (H.IsRequest req, H.IsResponse res)
+                => Application (C.ResourceT IO)
+                -> req
+                -> Server res
 handleSubroutes app req =
     case (H.requestMethod req, suffix) of
         -- TODO: Add OPTIONS response.
@@ -85,19 +88,20 @@ handleSubroutes app req =
 -- | Used as a response to http://example.com/<application_prefix>/<server_id>/<session_id>/<transport>
 --
 --   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-36 and the following sections.
-responseTransport :: TS.Text
+responseTransport :: H.IsResponse res
+                  => TS.Text
                   -> Request
-                  -> Server H.Response
+                  -> Server res
 responseTransport trans req =
     case trans of
         "websocket"     -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-50
         "xhr"           -> handle (Proxy :: Proxy XHRPolling)    -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
-        "xhr_send"      -> handle (Proxy :: Proxy XHRSend)       -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
-        "xhr_streaming" -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-83
-        "eventsource"   -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-91
+        "xhr_streaming" -> handle (Proxy :: Proxy XHRStreaming)  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-83
+        "xhr_send"      -> handle (Proxy :: Proxy XHRSend)       -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74        
+        "eventsource"   -> handle (Proxy :: Proxy EventSource)   -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-91
         "htmlfile"      -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-100
-        "jsonp"         -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
-        "jsonp_send"    -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
+        "jsonp"         -> handle (Proxy :: Proxy JSONPPolling)  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
+        "jsonp_send"    -> handle (Proxy :: Proxy JSONPSend)     -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
         _               -> return H.response404
     where handle tag = handleIncoming tag req
  
@@ -108,16 +112,17 @@ responseTransport trans req =
 --     * http://example.com/<application_prefix>
 --
 --   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-12
-responseGreeting :: H.Response
+responseGreeting ::  H.IsResponse res => res
 responseGreeting = H.response200 H.headerPlain "Welcome to SockJS!\n"
 
 ------------------------------------------------------------------------------
 -- | Used as a response to http://example.com/<application_prefix>/iframe*.html
 --
 --   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-15
-responseIframe :: ApplicationSettings
-               -> H.Request
-               -> H.Response
+responseIframe :: (H.IsRequest req, H.IsResponse res)
+               => ApplicationSettings
+               -> req
+               -> res
 responseIframe appSet req = go . convertTS2BL $ settingsSockURL appSet
     where
       go url = case lookup "If-None-Match" (H.requestHeaders req) of
@@ -148,9 +153,10 @@ responseIframe appSet req = go . convertTS2BL $ settingsSockURL appSet
 -- | Used as a response to http://example.com/info
 --
 --   Documentation: http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-26
-responseInfo :: ApplicationSettings
-             -> H.Request
-             -> Server H.Response
+responseInfo :: (H.IsRequest req, H.IsResponse res)
+             => ApplicationSettings
+             -> req
+             -> Server res
 responseInfo appSet req = do
     ent <- liftIO $ randomRIO ((0, 4294967295) :: (Int, Int))
     return . H.response200 (H.headerJSON <> H.headerNotCached <> H.headerCORS "*" req) . AE.encode $ AE.object

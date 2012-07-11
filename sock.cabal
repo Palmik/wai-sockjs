@@ -32,12 +32,14 @@ library
     , Network.Sock.Application
     , Network.Sock.Frame
     , Network.Sock.Handler
+    , Network.Sock.Protocol
     , Network.Sock.Request
     , Network.Sock.Session
     , Network.Sock.Transport.XHR
     , Network.Sock.Transport.WebSocket
     , Network.Sock.Types.Application
     , Network.Sock.Types.Frame
+    , Network.Sock.Types.Protocol
     , Network.Sock.Types.Request
     , Network.Sock.Types.Server
     , Network.Sock.Types.Session

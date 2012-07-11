@@ -11,7 +11,7 @@ $(document).ready(function()
     if ("WebSocket" in window)
     {
         message("WebSockets supported!");
-        ws = new WebSocket("ws://0.0.0.0:8080/harr_echo/000/000/websocket");
+        ws = new WebSocket("ws://0.0.0.0:8080/close/000/000/websocket");
         
         ws.onopen = function()
         {
