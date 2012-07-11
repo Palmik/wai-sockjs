@@ -21,11 +21,11 @@ import           Network.Sock.Protocol
 
 message :: Monad m
         => BL.ByteString
-        -> C.Pipe i Protocol m ()
+        -> C.Pipe l i Protocol u m ()
 message = C.yield . Message
 
 close :: Monad m
-      => C.Pipe i Protocol m ()
+      => C.Pipe l i Protocol u m ()
 close = C.yield $ Control Close
 
 ------------------------------------------------------------------------------
