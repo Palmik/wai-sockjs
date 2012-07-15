@@ -35,6 +35,7 @@ import           Network.Sock.Server
 import           Network.Sock.Session
 import           Network.Sock.Transport
 import           Network.Sock.Transport.XHR
+import           Network.Sock.Transport.HTMLFile
 import           Network.Sock.Transport.JSONP
 import           Network.Sock.Transport.WebSocket
 import           Network.Sock.Transport.EventSource
@@ -99,7 +100,7 @@ responseTransport trans req =
         "xhr_streaming" -> handle (Proxy :: Proxy XHRStreaming)  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-83
         "xhr_send"      -> handle (Proxy :: Proxy XHRSend)       -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74        
         "eventsource"   -> handle (Proxy :: Proxy EventSource)   -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-91
-        "htmlfile"      -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-100
+        "htmlfile"      -> handle (Proxy :: Proxy HTMLFile)      -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-100
         "jsonp"         -> handle (Proxy :: Proxy JSONPPolling)  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
         "jsonp_send"    -> handle (Proxy :: Proxy JSONPSend)     -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
         _               -> return H.response404

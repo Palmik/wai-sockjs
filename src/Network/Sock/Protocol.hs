@@ -3,20 +3,23 @@ module Network.Sock.Protocol
 , ProtocolControl(..)
 
 , isMessage
+, isRaw
 , fromMessage
 ) where
 
 ------------------------------------------------------------------------------
 import qualified Data.ByteString.Lazy as BL
-import           Data.Proxy
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Protocol
-import           Network.Sock.Types.Transport
 ------------------------------------------------------------------------------
 
 isMessage :: Protocol -> Bool
 isMessage (Message _) = True
 isMessage _           = False
+
+isRaw :: Protocol -> Bool
+isRaw (Raw _) = True
+isRaw _       = False
 
 fromMessage :: Protocol -> BL.ByteString
 fromMessage (Message s) = s

@@ -15,7 +15,7 @@ import           Network.Sock.Types.Application
 
 -- | Request wrapper type.
 data Request where
-    Request ::  H.IsRequest req =>
+    Request :: H.IsRequest req =>
         { requestRaw :: req
         , requestSessionID :: SessionID
         , requestApplication :: Application (C.ResourceT IO)

@@ -29,6 +29,7 @@ library
     , Control.Concurrent.MVar.Extra.Lifted
     , Control.Concurrent.STM.TMChan.Extra
     , Data.ByteString.Extra
+    , Data.Conduit.List.Extra
     , Network.Sock.Application
     , Network.Sock.Frame
     , Network.Sock.Handler
@@ -36,6 +37,8 @@ library
     , Network.Sock.Request
     , Network.Sock.Session
     , Network.Sock.Transport.XHR
+    , Network.Sock.Transport.Streaming
+    , Network.Sock.Transport.Polling
     , Network.Sock.Transport.WebSocket
     , Network.Sock.Types.Application
     , Network.Sock.Types.Frame
@@ -72,6 +75,7 @@ library
     , tagged                 == 0.4.*
     , transformers
     , transformers-base      == 0.4.*
+    , timers                 == 0.1.*
     , unordered-containers   == 0.2.*
     , vector
     , wai                    == 1.3.*

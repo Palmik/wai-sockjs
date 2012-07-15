@@ -50,7 +50,7 @@ instance Transport JSONPPolling where
              "GET"     ->
                  case lookup "c" $ requestQuery req of
                       Just _  -> getSession sid >>= handleByStatus tag handleF handleO handleC handleW
-                      Nothing -> return $ respondLBS tag H.status500 "\"callback\" parameter required.\n" req
+                      Nothing -> return $ respondLBS tag req H.status500 "\"callback\" parameter required.\n"
              "OPTIONS" -> return $! responseOptions ["OPTIONS", "GET"] req
              _         -> return H.response404
 
@@ -59,7 +59,7 @@ instance Transport JSONPPolling where
             handleF ses = do
                 -- TODO: Start the timers.
                 lift $ forkApplication app ses
-                return (SessionOpened, respondFrame200 tag FrameOpen req)
+                return (SessionOpened, respondFrame200 tag req FrameOpen)
 
             handleO :: H.IsResponse res => Session -> Server (SessionStatus, res)
             handleO ses = do
@@ -68,28 +68,27 @@ instance Transport JSONPPolling where
                 when (null msgs || not (null rest))
                      (closeSession ses)
                 case msgs of
-                     [] -> return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req) -- This should not happen since it means that the channel is closed.
-                     xs | not $ null rest -> return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req)
-                        | otherwise       -> return (SessionOpened, respondFrame200 tag (FrameMessages (map fromMessage xs)) req)
+                     [] -> return (SessionClosed, respondFrame200 tag req $ FrameClose 3000 "Go away!") -- This should not happen since it means that the channel is closed.
+                     xs | not $ null rest -> return (SessionClosed, respondFrame200 tag req $ FrameClose 3000 "Go away!")
+                        | otherwise       -> return (SessionOpened, respondFrame200 tag req $ FrameMessages (map fromMessage xs))
 
             handleC :: H.IsResponse res => Session -> Server (SessionStatus, res)
-            handleC _ = return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req)
+            handleC _ = return (SessionClosed, respondFrame200 tag req $ FrameClose 3000 "Go away!")
 
             handleW :: H.IsResponse res => Session -> Server res
-            handleW _ = return $ respondFrame200 tag (FrameClose 2010 "Another connection still open") req
+            handleW _ = return . respondFrame200 tag req $ FrameClose 2010 "Another connection still open"
 
             sid = requestSessionID req
             app = requestApplication req
 
-    format _ fr req =
+    format _ req fr =
         case lookup "c" $ requestQuery req of
              Just (Just c) -> convertBS2BL c <> "(" <> AE.encode (encodeFrame fr) <> ");\r\n"
              _             -> "\"callback\" parameter required.\n"
 
-    respond _ f st str req = f st headers str
-        where headers =    H.headerJS
-                        <> H.headerNotCached
-                        <> H.headerJSESSIONID req
+    headers _ req =   H.headerJS
+                   <> H.headerNotCached
+                   <> H.headerJSESSIONID req
 
 ------------------------------------------------------------------------------
 -- |
@@ -117,7 +116,7 @@ instance Transport JSONPSend where
             handleO ses = (\x -> (SessionOpened, x)) <$> handleW ses
 
             handleC :: H.IsResponse res => Session -> Server (SessionStatus, res)
-            handleC _ = return (SessionClosed, respondFrame200 tag (FrameClose 3000 "Go away!") req)
+            handleC _ = return (SessionClosed, respondFrame200 tag req $ FrameClose 3000 "Go away!")
 
             handleW :: H.IsResponse res => Session -> Server res
             handleW ses = do
@@ -132,9 +131,9 @@ instance Transport JSONPSend where
                 case decode body of
                      Just xs -> do
                          atomically $ writeTMChanList (sessionIncomingBuffer ses) xs
-                         return $ respondLBS tag H.status200 "ok" req
-                     Nothing | body == "" -> return $ respondLBS tag H.status500 "Payload expected.\n" req     -- If the body of request is empty, report it. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-80)
-                             | otherwise  -> return $ respondLBS tag H.status500 "Broken JSON encoding.\n" req -- If the body of request is not valid JSON, report it. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-80)
+                         return $ respondLBS tag req H.status200 "ok"
+                     Nothing | body == "" -> return $ respondLBS tag req H.status500 "Payload expected.\n"     -- If the body of request is empty, report it. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-80)
+                             | otherwise  -> return $ respondLBS tag req H.status500 "Broken JSON encoding.\n" -- If the body of request is not valid JSON, report it. (http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-80)
 
             decode :: BL.ByteString -> Maybe [BL.ByteString]
             decode = AE.decode
@@ -142,10 +141,9 @@ instance Transport JSONPSend where
             sid = requestSessionID req
             app = requestApplication req
 
-    format _ fr _ = encodeFrame fr <> "\n"
+    format _ _ fr = encodeFrame fr <> "\n"
 
-    respond _ f st str req = f st headers str
-        where headers =   H.headerPlain
-                       <> H.headerCORS "*" req
-                       <> H.headerJSESSIONID req
+    headers _ req =   H.headerPlain
+                   <> H.headerCORS "*" req
+                   <> H.headerJSESSIONID req
                                                                              

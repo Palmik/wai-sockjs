@@ -5,6 +5,7 @@ module Network.Sock.Transport.Utility
 ( respondFrame
 , respondFrame200
 , respondLBS
+, respondSource
 , handleByStatus
 
 , responseOptions
@@ -15,12 +16,15 @@ import           Control.Concurrent.MVar.Extra.Lifted
 ------------------------------------------------------------------------------
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString      as BS
+import qualified Data.Conduit         as C
 import           Data.Proxy
 ------------------------------------------------------------------------------
 import qualified Network.HTTP.Types          as H (Status, status200)
 import qualified Network.HTTP.Types.Request  as H
 import qualified Network.HTTP.Types.Response as H
 import qualified Network.HTTP.Types.Extra    as H
+------------------------------------------------------------------------------
+import qualified Blaze.ByteString.Builder as B
 ------------------------------------------------------------------------------
 import           Network.Sock.Frame
 import           Network.Sock.Request
@@ -45,26 +49,34 @@ responseOptions methods req = H.response204 headers ""
 
 respondFrame :: (H.IsResponse res, Transport tag)
              => Proxy tag
+             -> Request
              -> H.Status
              -> Frame
-             -> Request
              -> res
-respondFrame tag st fr req = respondLBS tag st (format tag fr req) req
+respondFrame tag req st fr = respondLBS tag req st (format tag req fr)
 
 respondFrame200 :: (H.IsResponse res, Transport tag)
                 => Proxy tag
-                -> Frame
                 -> Request
+                -> Frame                
                 -> res
-respondFrame200 tag = respondFrame tag H.status200
+respondFrame200 tag req = respondFrame tag req H.status200
 
 respondLBS :: (H.IsResponse res, Transport tag)
            => Proxy tag
-           -> H.Status
-           -> BL.ByteString
            -> Request
+           -> H.Status
+           -> BL.ByteString           
            -> res
-respondLBS tag = respond tag H.responseLBS
+respondLBS tag req status body = H.responseLBS status (headers tag req) body
+
+respondSource :: (H.IsResponse res, Transport tag)
+              => Proxy tag
+              -> Request
+              -> H.Status
+              -> (C.Source (C.ResourceT IO) (C.Flush B.Builder))              
+              -> res
+respondSource tag req status source = H.responseSource status (headers tag req) source
 
 handleByStatus :: (H.IsResponse res, Transport tag)
                => Proxy tag

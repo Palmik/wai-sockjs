@@ -1,12 +1,15 @@
 ## About
 
+This project is still work in progress.
+
 ## Other implementations
 
 There are other SockJS implementations for Haskell (under construction), the two I know of are:
 
-https://github.com/yihuang/wai-sockjs
-https://github.com/bitonic/sockjs-haskell
+* https://github.com/yihuang/wai-sockjs
+* https://github.com/bitonic/sockjs-haskell
 
-This project was originally fork of Yihuang's work (you can find that code on the branch 'old').
-I have also toyed with Bitonic's code (you can that code on the branch 'old2').
-Now the project is independent of these two.
+This project was originally fork of Yihuang's work (check out [this branch](https://github.com/Palmik/wai-sockjs/tree/old)).
+I have also toyed with Bitonic's code (check out [this branch](https://github.com/Palmik/wai-sockjs/tree/old2)).
+
+I have borrowed some of their ideas, but the project itself is a rewrite from the ground up.

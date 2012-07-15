@@ -19,7 +19,6 @@ import qualified Network.Sock.Application as S
 import qualified Network.Sock.Server      as S
 import qualified Network.Sock.Protocol    as S
 import qualified Network.Wai.Sock         as S
-import           Network.Wai.Handler.Warp as W
 ------------------------------------------------------------------------------
 
 close = S.Application
