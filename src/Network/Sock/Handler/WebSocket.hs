@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Network.Sock.Transport.WebSocket
+module Network.Sock.Handler.WebSocket
 ( runApplicationWS
 ) where
 
@@ -64,7 +64,7 @@ runApplicationWS app@Application{..} ses@Session{..} req = do
     -- | Kill the threads.
     liftIO $ killThread atid
     liftIO $ killThread stid
-    closeSession ses
+    finalizeSession ses
     
     where -- | Send data until the buffer is closed.
           sendIteration sink baton =  do

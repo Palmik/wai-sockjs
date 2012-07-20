@@ -15,7 +15,7 @@ import           Control.Concurrent.MVar.Lifted
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
-import qualified Data.Conduit.TMChan  as C (sourceTMChan, sinkTMChan)
+import qualified Data.Conduit.TMChan as C (sourceTMChan, sinkTMChan)
 import           Data.Default
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Application
@@ -35,10 +35,10 @@ instance Default ApplicationSettings where
 --   and if noone is trying to fork one (the MVar is not empty), forks the
 --   given Application and saves the `ThreadId` into the MVar.
 forkApplication :: (MonadBaseControl IO m, MonadIO m)
-                => Application m
-                -> Session
+                => Session
+                -> Application m
                 -> m Bool
-forkApplication Application{..} Session{..} = 
+forkApplication Session{..} Application{..} =
     modifyMVar sessionApplicationThread $ \mt ->
         case mt of
              Nothing -> (\ti -> (Just ti, True)) <$> fork runApplication

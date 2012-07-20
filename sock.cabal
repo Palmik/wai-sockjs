@@ -18,7 +18,7 @@ library
   exposed-modules:
       Network.Sock
     , Network.Sock.Server
-    , Network.Sock.Transport
+    , Network.Sock.Handler
     , Network.HTTP.Types.Extra
     , Network.HTTP.Types.Request
     , Network.HTTP.Types.Response
@@ -32,21 +32,19 @@ library
     , Data.Conduit.List.Extra
     , Network.Sock.Application
     , Network.Sock.Frame
-    , Network.Sock.Handler
     , Network.Sock.Protocol
     , Network.Sock.Request
     , Network.Sock.Session
-    , Network.Sock.Transport.XHR
-    , Network.Sock.Transport.Streaming
-    , Network.Sock.Transport.Polling
-    , Network.Sock.Transport.WebSocket
+    , Network.Sock.Handler.Common
+    , Network.Sock.Handler.XHR
+    , Network.Sock.Handler.WebSocket
     , Network.Sock.Types.Application
     , Network.Sock.Types.Frame
     , Network.Sock.Types.Protocol
     , Network.Sock.Types.Request
     , Network.Sock.Types.Server
     , Network.Sock.Types.Session
-    , Network.Sock.Types.Transport
+    , Network.Sock.Types.Handler
 
   build-depends:
       attoparsec

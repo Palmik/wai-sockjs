@@ -54,7 +54,7 @@ headerCached = [("Cache-Control", "public; max-age=31536000;"),("Expires", "3153
 headerNotCached :: H.ResponseHeaders
 headerNotCached = [("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")]
 
-headerETag :: H.Ascii -> H.ResponseHeaders
+headerETag :: BS.ByteString -> H.ResponseHeaders
 headerETag etag = [("ETag", etag)]
 
 headerHTML :: H.ResponseHeaders

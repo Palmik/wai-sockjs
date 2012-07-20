@@ -33,12 +33,14 @@ import           Network.Sock.Application
 import           Network.Sock.Request
 import           Network.Sock.Server
 import           Network.Sock.Session
-import           Network.Sock.Transport
-import           Network.Sock.Transport.XHR
-import           Network.Sock.Transport.HTMLFile
-import           Network.Sock.Transport.JSONP
-import           Network.Sock.Transport.WebSocket
-import           Network.Sock.Transport.EventSource
+import           Network.Sock.Types.Handler
+
+import           Network.Sock.Handler.Common (responseOptions)
+import           Network.Sock.Handler.EventSource
+import           Network.Sock.Handler.HTMLFile
+import           Network.Sock.Handler.JSONP
+import           Network.Sock.Handler.WebSocket
+import           Network.Sock.Handler.XHR
 ------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -93,7 +95,7 @@ responseTransport :: H.IsResponse res
                   => TS.Text
                   -> Request
                   -> Server res
-responseTransport trans req =
+responseTransport trans req = 
     case trans of
         "websocket"     -> return H.response404                  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-50
         "xhr"           -> handle (Proxy :: Proxy XHRPolling)    -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-74
@@ -104,7 +106,7 @@ responseTransport trans req =
         "jsonp"         -> handle (Proxy :: Proxy JSONPPolling)  -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
         "jsonp_send"    -> handle (Proxy :: Proxy JSONPSend)     -- http://sockjs.github.com/sockjs-protocol/sockjs-protocol-0.3.html#section-108
         _               -> return H.response404
-    where handle tag = handleIncoming tag req
+    where handle tag = handleReuqest tag req
  
 ------------------------------------------------------------------------------
 -- | Used as a response to:

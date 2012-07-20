@@ -1,8 +1,8 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Sock.Types.Transport
-( Transport(..)
+module Network.Sock.Types.Handler
+( Handler(..)
 ) where
 
 ------------------------------------------------------------------------------
@@ -18,12 +18,12 @@ import           Network.Sock.Types.Server
 import           Network.Sock.Types.Request
 ------------------------------------------------------------------------------
 
--- | Transport
-class Transport tag where
-    handleIncoming :: H.IsResponse res
-                   => Proxy tag
-                   -> Request
-                   -> Server res
+-- | Handler
+class Handler tag where
+    handleReuqest :: H.IsResponse res
+                  => Proxy tag
+                  -> Request
+                  -> Server res
 
     -- | Formats the Frame (different protocols may format frames differently).
     format :: H.IsRequest req

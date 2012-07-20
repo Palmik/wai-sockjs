@@ -8,7 +8,8 @@ module Network.Sock.Session
 , SessionID
 
 , newSession
-, closeSession
+, initializeSession
+, finalizeSession
 
 , insertSession
 , lookupSession
@@ -22,25 +23,38 @@ import           Control.Concurrent.MVar.Lifted
 import qualified Control.Concurrent.MVar        as MV
 import           Control.Concurrent.STM               (atomically)
 import           Control.Concurrent.STM.TMChan
+import           Control.Monad.IO.Class
 import           Control.Monad.Base
+import           Control.Monad.Trans.Control
 ------------------------------------------------------------------------------
 import qualified Data.HashMap.Strict as HM (insert, lookup)
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Session
 import           Network.Sock.Server
+import           Network.Sock.Application
 ------------------------------------------------------------------------------
 
-closeSession :: MonadBase IO m
-             => Session
-             -> m ()
-closeSession ses@Session{..} = do
+initializeSession :: (MonadBaseControl IO m, MonadIO m)
+                  => Session
+                  -> Application m
+                  -> m ()
+initializeSession ses app = do
+    -- TODO: Start the timers.
+    -- Start the application thread
+    forkApplication ses app
+    return ()
+
+finalizeSession :: MonadBase IO m
+                => Session
+                -> m ()
+finalizeSession ses@Session{..} = do
     -- TODO: Stop the timers.
     -- Stop the application thread.
     liftBase $ MV.withMVar sessionApplicationThread (maybe (return ()) killThread)
 
     -- Close the buffers.
-    liftBase . atomically $ do
-        closeTMChan sessionIncomingBuffer
+    liftBase . atomically $ 
+        closeTMChan sessionIncomingBuffer >>
         closeTMChan sessionOutgoingBuffer
 
 -- | Clever constructor. Sessions should be created using this function only.
@@ -51,7 +65,6 @@ newSession sid = Session sid <$> newMVar SessionFresh
                              <*> liftBase newTMChanIO
                              <*> liftBase newTMChanIO
                              <*> newMVar Nothing
-
 
 -- | Inserts a new Session under the given SessionID.
 insertSession :: SessionID
@@ -77,6 +90,5 @@ getSession sid = do
     mms <- lookupSession sid
     case mms of
          Just ms -> return ms
-         Nothing -> do
-             s <- newSession sid
-             insertSession sid s
+         Nothing -> newSession sid >>= insertSession sid
+         
