@@ -52,10 +52,10 @@ pollingSource :: Handler tag
               -> C.Source (C.ResourceT IO) (C.Flush B.Builder)
 pollingSource tag req ses status =
     case status of
-         Just SessionFresh  -> initialize >> yieldAndFlush (format' FrameOpen) >> setOpened
-         Just SessionOpened -> liftSTM (getTMChanContents $ sessionOutgoingBuffer ses) >>= loop id
-         Just SessionClosed -> do
-             yieldAndFlush (format' $ FrameClose 3000 "Go away!")
+         Just (SessionFresh)  -> initialize >> yieldAndFlush (format' FrameOpen) >> setOpened
+         Just (SessionOpened) -> liftSTM (getTMChanContents $ sessionOutgoingBuffer ses) >>= loop id
+         Just (SessionClosed code reason) -> do
+             yieldAndFlush (format' $ FrameClose code reason)
              setClosed
          Nothing -> yieldAndFlush $ format' $ FrameClose 2010 "Another connection still open"
     where loop front [] = yieldAndFlush (format' $ FrameMessages $ front []) >> setOpened
@@ -69,7 +69,7 @@ pollingSource tag req ses status =
                        finalize >> setClosed
                        
           format' = format tag req
-          setClosed = lift $ putMVar (sessionStatus ses) SessionClosed
+          setClosed = lift $ putMVar (sessionStatus ses) $ SessionClosed 3000 "Go away!"
           setOpened = lift $ putMVar (sessionStatus ses) SessionOpened
           initialize = lift $ initializeSession ses $ requestApplication req
           finalize = lift $ finalizeSession ses
@@ -87,12 +87,9 @@ streamingSource :: Handler tag
                 -> C.Source (C.ResourceT IO) (C.Flush B.Builder)
 streamingSource tag req limit prelude ses status =
     case status of
-         Just SessionFresh  -> initialize >> prelude >> yieldOpenFrame >> loop 0
-         Just SessionOpened -> prelude >> yieldOpenFrame >> loop 0
-         Just SessionClosed -> do
-             prelude
-             yieldAndFlush (format' $ FrameClose 3000 "Go away!")
-             setClosed
+         Just (SessionFresh)  -> initialize >> prelude >> yieldOpenFrame >> loop 0
+         Just (SessionOpened) -> prelude >> yieldOpenFrame >> loop 0
+         Just (SessionClosed code reason) -> prelude >> yieldAndFlush (format' $ FrameClose code reason) >> setClosed
          Nothing -> prelude >> yieldAndFlush (format' $ FrameClose 2010 "Another connection still open")
     where loop n = liftSTM (readTMChan $ sessionOutgoingBuffer ses) >>=
               maybe (return ())
@@ -117,7 +114,7 @@ streamingSource tag req limit prelude ses status =
                                  finalize >> setClosed
                     )
           format' = format tag req
-          setClosed = lift $ putMVar (sessionStatus ses) SessionClosed
+          setClosed = lift $ putMVar (sessionStatus ses) $ SessionClosed 3000 "Go away!"
           setOpened = lift $ putMVar (sessionStatus ses) SessionOpened
           initialize = lift $ initializeSession ses $ requestApplication req
           finalize = lift $ finalizeSession ses

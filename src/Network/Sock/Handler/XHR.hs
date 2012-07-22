@@ -94,13 +94,13 @@ instance Handler XHRSend where
             handle session = do
                 status <- tryTakeMVar $ sessionStatus session
                 case status of
-                     Just SessionFresh  -> return H.response404 -- ^ This should never happen, since we do not create sessions in this handler.
-                     Just SessionOpened -> do
+                     Just (SessionFresh)  -> return H.response404 -- ^ This should never happen, since we do not create sessions in this handler.
+                     Just (SessionOpened) -> do
                          res <- processIncoming session
                          putMVar (sessionStatus session) SessionOpened
                          return res
-                     Just SessionClosed -> return $ respondFrame' H.status200 $ FrameClose 3000 "Go away!"
-                     Nothing            -> processIncoming session
+                     Just (SessionClosed code reason) -> return $ respondFrame' H.status200 $ FrameClose code reason
+                     Nothing -> processIncoming session
 
             processIncoming session = do
                 (empty, decoded) <- lift $ (\x -> (x == "", decode x)) <$> requestBodyConsumed req

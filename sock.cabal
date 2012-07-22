@@ -73,7 +73,7 @@ library
     , tagged                 == 0.4.*
     , transformers
     , transformers-base      == 0.4.*
-    , timers                 == 0.1.*
+    , timers                 == 0.2.*
     , unordered-containers   == 0.2.*
     , vector
     , wai                    == 1.3.*

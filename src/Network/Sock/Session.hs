@@ -23,6 +23,7 @@ import           Control.Concurrent.MVar.Lifted
 import qualified Control.Concurrent.MVar        as MV
 import           Control.Concurrent.STM               (atomically)
 import           Control.Concurrent.STM.TMChan
+import           Control.Concurrent.Timer.Lifted
 import           Control.Monad.IO.Class
 import           Control.Monad.Base
 import           Control.Monad.Trans.Control
@@ -65,6 +66,8 @@ newSession sid = Session sid <$> newMVar SessionFresh
                              <*> liftBase newTMChanIO
                              <*> liftBase newTMChanIO
                              <*> newMVar Nothing
+                             -- <*> newTimer
+                             -- <*> newTimer
 
 -- | Inserts a new Session under the given SessionID.
 insertSession :: SessionID

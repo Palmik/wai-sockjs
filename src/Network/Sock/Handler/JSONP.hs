@@ -19,7 +19,7 @@ import           Data.Monoid                      ((<>))
 import qualified Data.ByteString.Extra      as BS (convertBS2BL)
 import qualified Data.ByteString.Lazy       as BL (ByteString, fromChunks, splitAt)
 ------------------------------------------------------------------------------
-import qualified Network.HTTP.Types          as H (status500, status204, status200, urlDecode)
+import qualified Network.HTTP.Types          as H (status500, status200, urlDecode)
 import qualified Network.HTTP.Types.Extra    as H
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Handler
@@ -78,12 +78,12 @@ instance Handler JSONPSend where
             handle session = do
                 status <- tryTakeMVar $ sessionStatus session
                 case status of
-                     Just SessionFresh  -> return H.response404 -- ^ This should never happen, since we do not create sessions in this handler.
-                     Just SessionOpened -> do
+                     Just (SessionFresh)  -> return H.response404 -- ^ This should never happen, since we do not create sessions in this handler.
+                     Just (SessionOpened) -> do
                          res <- processIncoming session
                          putMVar (sessionStatus session) SessionOpened
                          return res
-                     Just SessionClosed -> return $ respondFrame' H.status200 $ FrameClose 3000 "Go away!"
+                     Just (SessionClosed code reason) -> return $ respondFrame' H.status200 $ FrameClose code reason
                      Nothing            -> processIncoming session
 
             processIncoming session = do
