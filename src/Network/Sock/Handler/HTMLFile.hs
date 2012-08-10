@@ -6,8 +6,6 @@ module Network.Sock.Handler.HTMLFile
 ) where
 
 ------------------------------------------------------------------------------
-import           Control.Concurrent.MVar.Lifted
-------------------------------------------------------------------------------
 import qualified Data.Aeson                 as AE
 import           Data.Monoid                      ((<>))
 import qualified Data.ByteString            as BS (ByteString)
@@ -39,8 +37,7 @@ instance Handler HTMLFile where
                       Just (Just c) -> do                          
                           let prelude = yieldAndFlush $ htmlHead c
                           session <- getSession $ requestSessionID req
-                          status  <- tryTakeMVar $ sessionStatus session
-                          return $ respondSource tag req H.status200 $ streamingSource tag req 4096 prelude session status
+                          return $ respondSource tag req H.status200 $ streamingSource tag req 4096 prelude session
                       Nothing       -> return $ respondLBS tag req H.status500 "\"callback\" parameter required.\n"
              "OPTIONS" -> return $! responseOptions ["OPTIONS", "GET"] req
              _         -> return H.response404

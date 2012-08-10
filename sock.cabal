@@ -28,6 +28,7 @@ library
       Control.Concurrent.MVar.Extra
     , Control.Concurrent.MVar.Extra.Lifted
     , Control.Concurrent.STM.TMChan.Extra
+    , Control.Monad.Trans.Resource.Extra
     , Data.ByteString.Extra
     , Data.Conduit.List.Extra
     , Network.Sock.Application
@@ -66,6 +67,7 @@ library
     , mtl                    == 2.1.*
     , pureMD5
     , random                 == 1.*
+    , resourcet              == 0.3.*
     , stm
     , stm-chans              == 1.3.*
     , stm-conduit            == 0.4.*

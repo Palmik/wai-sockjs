@@ -6,12 +6,10 @@ module Network.Sock.Handler.EventSource
 ) where
 
 ------------------------------------------------------------------------------
-import           Control.Concurrent.MVar.Lifted
-------------------------------------------------------------------------------
 import           Data.Monoid                      ((<>))
 ------------------------------------------------------------------------------
-import qualified Network.HTTP.Types          as H (status200)
-import qualified Network.HTTP.Types.Extra    as H
+import qualified Network.HTTP.Types       as H (status200)
+import qualified Network.HTTP.Types.Extra as H
 ------------------------------------------------------------------------------
 import           Network.Sock.Types.Handler
 import           Network.Sock.Frame
@@ -32,8 +30,7 @@ instance Handler EventSource where
              "GET"     -> do
                  let prelude = yieldAndFlush "\r\n"
                  session <- getSession $ requestSessionID req
-                 status  <- tryTakeMVar $ sessionStatus session
-                 return $ respondSource tag req H.status200 $ streamingSource tag req 4096 prelude session status
+                 return $ respondSource tag req H.status200 $ streamingSource tag req 4096 prelude session
              "OPTIONS" -> return $! responseOptions ["OPTIONS", "GET"] req
              _         -> return H.response404
 

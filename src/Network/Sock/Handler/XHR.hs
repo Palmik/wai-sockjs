@@ -39,8 +39,7 @@ instance Handler XHRPolling where
         case requestMethod req of
              "POST"    -> do
                  session <- getSession $ requestSessionID req
-                 status  <- tryTakeMVar $ sessionStatus session
-                 return $ respondSource tag req H.status200 $ pollingSource tag req session status
+                 return $ respondSource tag req H.status200 $ pollingSource tag req session
              "OPTIONS" -> return $! responseOptions ["OPTIONS", "POST"] req
              _         -> return H.response404
 
@@ -62,8 +61,7 @@ instance Handler XHRStreaming where
              "POST"    -> do
                  let prelude = yieldAndFlush $ BL.replicate 2048 'h' <> "\n"
                  session <- getSession $ requestSessionID req
-                 status  <- tryTakeMVar $ sessionStatus session
-                 return $ respondSource tag req H.status200 $ streamingSource tag req 4096 prelude session status
+                 return $ respondSource tag req H.status200 $ streamingSource tag req 4096 prelude session
              "OPTIONS" -> return $! responseOptions ["OPTIONS", "POST"] req
              _         -> return H.response404
 

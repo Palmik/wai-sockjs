@@ -42,8 +42,7 @@ instance Handler JSONPPolling where
                  case lookup "c" $ requestQuery req of
                       Just (Just c) -> do
                           session <- getSession $ requestSessionID req
-                          status  <- tryTakeMVar $ sessionStatus session
-                          return $ respondSource tag req H.status200 $ pollingSource tag req session status
+                          return $ respondSource tag req H.status200 $ pollingSource tag req session
                       Nothing       -> return $ respondLBS tag req H.status500 "\"callback\" parameter required.\n"
              "OPTIONS" -> return $! responseOptions ["OPTIONS", "GET"] req
              _         -> return H.response404
